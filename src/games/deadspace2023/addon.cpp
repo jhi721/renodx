@@ -24,6 +24,32 @@ namespace {
 
 ShaderInjectData shader_injection;
 
+// ===========================================================================================
+// KNOWN ISSUE — NOT SHIPPABLE AS-IS (DX12 runtime-PSO-streaming incompatibility)   [2026-06-02]
+// -------------------------------------------------------------------------------------------
+// On this engine (Frostbite Core2, D3D12) the mod causes severe camera-turn STUTTER and an
+// intermittent game-side CRASH during gameplay:
+//     Engine.Render.Core2.PlatformPcDx12!DeviceInit -> D3D12Core -> ucrtbase!memcpy  (AV c0000005)
+// Root cause, confirmed by A/B isolation:
+//     * no ReShade            -> stable
+//     * ReShade, no addon     -> stable
+//     * ReShade + THIS addon  -> stutter on camera turns + crash in gameplay
+// The trigger is RenoDX's GLOBAL cbuffer-13 root-signature injection (mods/shader.hpp): every
+// pipeline layout the game creates is rebuilt with an extra root param. Frostbite streams many
+// PSOs at runtime (esp. on camera turns), so each pays the layout re-creation cost (stutter) and
+// a modified layout eventually breaks the engine's own DeviceInit memcpy (crash). The fault is in
+// GAME code, but WE provoke it. NOT fixable by addon config: force_pipeline_cloning=false and
+// disabling in-game RTAO both made NO difference (layout injection is independent of cloning).
+// Our shaders are ps_5_0 (SM5.0), so cb13 must live in space0 and competes with the game's own
+// root params (can't hide it in a safe high register space).
+// MEA (also Frostbite) is fine only because it is DX11 — no explicit root signatures / runtime PSO
+// streaming. Same DX12 quirk that kills devkit draw-capture on this engine.
+// The SAME symptom occurs in the FFXVI mod (another DX12 title) => this is a RenoDX-core injection-
+// vs-DX12-streaming limitation, not a bug in this mod's HDR/grade/UI code (those are validated).
+// Resolution: blocked pending a RenoDX-core change to scope cb13 injection to only the replaced
+// pipelines (or a non-layout settings-delivery path). See NOTES.md.
+// ===========================================================================================
+
 // Dead Space (2023) fuses tonemap + grade + UI composite + present into ONE pixel shader. In HDR
 // only the analytic grade (bit1) + UI composite (bit8) run; the 3D LUT (bit2) and SDR (bit16) paths
 // are off (live-confirmed, see NOTES.md). One entry covers everything; branch selection is runtime.
@@ -384,7 +410,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
-        renodx::mods::shader::force_pipeline_cloning = true;
+        // force_pipeline_cloning clones EVERY pipeline the game creates (incl. all the PSOs Frostbite
+        // streams in during gameplay), which collides with this title's runtime DeviceInit/PSO path
+        // and crashes mid-gameplay (game-side memcpy AV near FSR2). We only need our 3 hash-matched
+        // shaders cloned, so leave this OFF — replacement still happens by hash.
+        renodx::mods::shader::force_pipeline_cloning = false;
         renodx::mods::shader::expected_constant_buffer_index = 13;
         renodx::mods::shader::allow_multiple_push_constants = true;
 

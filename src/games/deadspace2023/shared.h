@@ -57,7 +57,11 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_BLOWOUT              shader_injection.tone_map_blowout
 #define RENODX_TONE_MAP_FLARE                shader_injection.tone_map_flare
 #define RENODX_TONE_MAP_HUE_SHIFT            shader_injection.tone_map_hue_shift
-#define RENODX_GAMMA_CORRECTION              shader_injection.gamma_correction
+// EOTF emulation is applied by hand in ToneMapDeadSpace (ApplyEotfEmulation). Keep the library's
+// own gamma correction OFF, otherwise RenderIntermediatePass would re-apply it (double gamma:
+// mode 1 -> 2.2 twice; mode 2 -> our luminance-2.2 + a per-channel 2.4 on top). NOT
+// shader_injection.gamma_correction.
+#define RENODX_GAMMA_CORRECTION              renodx::draw::GAMMA_CORRECTION_NONE
 #define RENODX_SWAP_CHAIN_OUTPUT_PRESET      renodx::draw::SWAP_CHAIN_OUTPUT_PRESET_SCRGB
 #define RENODX_INTERMEDIATE_ENCODING         renodx::draw::GAMMA_CORRECTION_NONE
 // Only Vanilla+ pins highlights to Peak; SwapChainPass clamps the max channel to swap_chain_clamp_nits.
