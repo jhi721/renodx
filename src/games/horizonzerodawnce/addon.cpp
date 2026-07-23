@@ -64,7 +64,7 @@ namespace {
           .label = "Tone Mapper",
           .section = "Tone Mapping",
           .tooltip = "Sets the tone mapper type",
-          .labels = {"Vanilla", "Vanilla+", "Vanilla+ (Neutwo)", "Vanilla+ (PsychoV-24)"},
+          .labels = {"Vanilla", "Vanilla+", "Vanilla+ (Customized)", "Vanilla+ (PsychoV-24)"},
       },
       new renodx::utils::settings::Setting{
           .key = "ToneMapPeakNits",
@@ -201,7 +201,7 @@ namespace {
           .label = "LUT Strength",
           .section = "Color Grading",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = []() { return shader_injection.tone_map_type >= 2.f; },
           .parse = [](float value) { return value * 0.01f; },
           .is_visible = []() { return current_settings_mode >= 1.f; },
       },
@@ -213,7 +213,7 @@ namespace {
           .label = "LUT Sampling",
           .section = "Color Grading",
           .labels = {"Trilinear", "Tetrahedral"},
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = []() { return shader_injection.tone_map_type >= 2.f; },
           .is_visible = []() { return current_settings_mode >= 1.f; },
       },
       new renodx::utils::settings::Setting{
