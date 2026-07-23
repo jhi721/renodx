@@ -143,10 +143,10 @@ float3 ApplySaturationBlowoutHueCorrectionHighlightSaturation(float3 tonemapped,
 }
 
 // Grade in two halves so Highlight Saturation can key off luminance. The per-channel highlight
-// hue-shift + blowout emulation lives on the display map (adaptive PsychoV23 retention in
-// ApplyRenoDXFixedHDR10), NOT here - so this stage never pulls hue/chrominance toward a reference
-// (hue_correction_strength / chrominance_emulation stay 0). Only Exposure/Highlights/Shadows/
-// Contrast/Flare (luminance) + Saturation/Dechroma/Highlight Saturation (chroma) run here.
+// hue-shift + blowout emulation lives on the Customized scene bridge, NOT here - so this stage
+// never pulls hue/chrominance toward a reference (hue_correction_strength /
+// chrominance_emulation stay 0). Only Exposure/Highlights/Shadows/Contrast/Flare (luminance)
+// + Saturation/Dechroma/Highlight Saturation (chroma) run here.
 float3 ApplyRenoDXGrade(float3 color) {
   // PsychoV (mode 3) tone-maps in its own perceptual pipeline: Saturation rides its purity_scale
   // (kept out of the grade here so it survives the chroma compression).
@@ -178,6 +178,89 @@ float3 ApplyEotfEmulation(float3 color) {
     color = renodx::color::correct::GammaSafe(color, false, 2.4f);
   }
   return color;
+}
+
+float PeakRatio() {
+  return max(injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f), 1.001f);
+}
+
+// Native expansion runs before EOTF emulation. Move the selected display peak into
+// that internal domain so ApplyEotfEmulation maps the ceiling back to PeakRatio().
+float NativeExpansionCap() {
+  float cap = PeakRatio();
+  if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
+    cap = renodx::color::correct::GammaSafe(cap, true, 2.2f);
+  } else if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
+    cap = renodx::color::correct::GammaSafe(cap, true, 2.4f);
+  }
+  return cap;
+}
+
+struct NativeExpansionLuma {
+  float source;
+  float mapped;
+  float cap;
+};
+
+// HZDCE native highlight expansion, normalized from its fixed x20 output scale to
+// the selected Peak/Game ratio. At cap=20 with gamma correction off this is the
+// original curve. The low-headroom guard prevents the recalibration from dimming.
+NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float highlight_weight) {
+  NativeExpansionLuma result;
+  result.source = saturate(source_luma);
+  result.cap = NativeExpansionCap();
+
+  const float shoulder =
+      (log2(1.f - (result.source * 0.9816843271255493f)) * -0.6931471824645996f)
+      / (result.source + 0.000009999999747378752f);
+  const float weight = saturate(highlight_weight);
+  const float smooth_weight = weight * weight * (3.f - (weight * 2.f));
+  const float native_peak = (weight * 24.f) + 1.f;
+  const float expansion = (smooth_weight * (native_peak - shoulder)) + shoulder;
+  const float expansion_scaled = expansion * 0.04f;
+  const float expansion_curve = 1.f + ((1.f - expansion_scaled) * expansion_scaled);
+  const float mapped = result.source * expansion_scaled * expansion_curve * result.cap;
+
+  result.mapped = clamp(mapped, result.source, result.cap);
+  return result;
+}
+
+float3 ApplyCalibratedNativeExpansion(
+    float3 color,
+    float source_luma,
+    float highlight_weight,
+    float expansion_strength) {
+  const NativeExpansionLuma expansion =
+      EvaluateNativeExpansionLuma(source_luma, highlight_weight);
+  if (expansion.source <= 0.f) return color;
+
+  const float mapped = lerp(
+      expansion.source,
+      expansion.mapped,
+      saturate(expansion_strength));
+  return color * (mapped / expansion.source);
+}
+
+float3 ApplyPeakSafetyCap(float3 color) {
+  const float peak_ratio = PeakRatio();
+  const float peak_channel = renodx::math::Max(color);
+  if (peak_channel > peak_ratio) color *= peak_ratio / peak_channel;
+  return color;
+}
+
+float3 EncodeRenoDXHDR10(float3 color) {
+  const float3 scene_nits = max(0.f, color) * max(injectedData.diffuse_white_nits, 1.f);
+  return renodx::color::pq::EncodeSafe(
+      renodx::color::bt2020::from::BT709(scene_nits),
+      1.f);
+}
+
+// Standard Vanilla+ output: optional user grading, corrected EOTF emulation,
+// a hue-preserving peak ceiling, and fixed PQ.
+float3 ApplyRenoDXStandardOutput(float3 color, bool apply_grade) {
+  if (apply_grade) color = ApplyRenoDXGrade(color);
+  color = ApplyEotfEmulation(color);
+  return EncodeRenoDXHDR10(ApplyPeakSafetyCap(color));
 }
 
 // PsychoV23-style signed-opponent retention for adaptive highlight hue/blow emulation. white_progress
@@ -425,55 +508,6 @@ float3 ApplyPsycho23SignedOpponentRetentionAndGamutCompressionLMS(
           input_adaptive_state_lms));
 }
 
-// Log2-domain max-channel roll-off: the library clip-normalized exponential (identity
-// below rolloff_start; input == clip lands exactly on output_max) evaluated in log2 space.
-// - Max channel, not luminance: a luminance roll-off caps Y but lets the max channel of a
-//   non-neutral highlight overshoot the configured peak (a warm-white sun read ~500 nits
-//   at a 460-nit target). The uniform RGB scale keeps the roll-off hue-preserving.
-// - Log2 domain: compression is uniform per stop, so the top stops keep gradation
-//   instead of the linear-domain exponential crushing them.
-// - Identity below max(paper white, 0.5 * peak): the shoulder never touches the
-//   diffuse range and widens with display headroom.
-// - clip = the game's internal expansion-domain cap. Full-weight native white uses a final
-//   20x scale, but the shoulder parameter itself tops out at 25x; using 25 preserves that headroom.
-
-// Internal cap of the game's highlight expansion parameter: weight * 24 + 1 = 25.
-static const float NATIVE_EXPANSION_CLIP = 25.f;
-
-float3 ApplyRenoDXPeakRolloff(float3 color) {
-  const float paper_white = max(injectedData.diffuse_white_nits, 1.f);
-  const float peak_ratio = max(injectedData.peak_white_nits / paper_white, 1.001f);
-  const float clip = NATIVE_EXPANSION_CLIP;
-  // Content cap fits inside the display range: nothing to compress (also avoids the
-  // clip-normalized curve turning into highlight expansion when peak_ratio > clip).
-  if (peak_ratio >= clip) return color;
-  const float rolloff_start = max(1.f, peak_ratio * 0.5f);
-  const float peak_channel = renodx::math::Max(color);
-  if (peak_channel <= 0.f) return color;
-  const float mapped = exp2(renodx::tonemap::ExponentialRollOff(
-      log2(peak_channel), log2(rolloff_start), log2(peak_ratio), log2(clip)));
-  return min(peak_ratio, color * (mapped / peak_channel));
-}
-
-// Neutwo display mapping (the "Vanilla+ (Neutwo)" tone mapper): a continuous
-// Naka-Rushton-style curve with no identity segment - the whole range is compressed, trading
-// a slight dip of 100% white (-8.5% at a 460-nit peak, -2% at 1000) for a smoother, knee-free
-// approach into the highlights. Same parameter contract as ApplyRenoDXPeakRolloff:
-// - clip = NATIVE_EXPANSION_CLIP, the internal 25x expansion-domain ceiling; the same
-//   p >= c guard returns identity because past that point the curve degenerates into expansion.
-// - Max channel taken in BT.2020: gentler near the gamut edge than a BT.709 max.
-// - no external per-channel peak clamp after BT.2020 -> BT.709: this keeps the project-canonical
-//   Neutwo hue/chroma behavior. Saturated BT.709 channels may exceed the configured peak after the
-//   inverse matrix, but the Neutwo working-space max channel stays bounded.
-float3 ApplyRenoDXNeutwo(float3 color) {
-  const float paper_white = max(injectedData.diffuse_white_nits, 1.f);
-  const float peak_ratio = max(injectedData.peak_white_nits / paper_white, 1.001f);
-  if (peak_ratio >= NATIVE_EXPANSION_CLIP) return color;
-  return renodx::color::bt709::from::BT2020(
-      renodx::tonemap::neutwo::MaxChannel(
-          renodx::color::bt2020::from::BT709(color), peak_ratio, NATIVE_EXPANSION_CLIP));
-}
-
 // PsychoV-24 display mapping (opt-in "Vanilla+ (PsychoV-24)"): a perceptual observer-model curve
 // (LMS + MacLeod-Boynton). Idiom-A gamma: the scene stays LINEAR into the curve, the EOTF gamma is
 // folded OUT of the neutral peak target (inverse) and back ONTO the output (forward). Neutral
@@ -508,50 +542,11 @@ float3 ApplyRenoDXPsychoV(float3 color, bool apply_grade) {
   return ApplyEotfEmulation(color);  // Idiom-A forward gamma (undoes the peak inverse)
 }
 
-// Scene-relative linear BT.709 -> absolute-nits PQ BT.2020 (RenoDX fixed HDR encode).
-// No native highlight expansion: the menu/video pass has no highlight-weight input, and the
-// scene pass applies its own expansion before calling this.
-float3 ApplyRenoDXFixedHDR10(float3 color, bool apply_grade) {
-  // User grade sliders are scene-only. Menu/FMV/loading passes present pre-rendered content and
-  // skip ApplyRenoDXGrade; Vanilla+/Neutwo still run the shared display map, and menu/loading also
-  // get adaptive highlight retention below unless a video decode marked the frame as FMV.
+// Dedicated PsychoV-24 output. Its display mapper owns gamma and peak handling;
+// keep this separate from the fixed Standard output used by Vanilla+ and Customized.
+float3 ApplyRenoDXPsychoVOutput(float3 color, bool apply_grade) {
   if (apply_grade) color = ApplyRenoDXGrade(color);
-  if (injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS_PSYCHOV) {
-    // PsychoV owns its gamma (Idiom A), so it bypasses the shared EOTF step used below.
-    color = ApplyRenoDXPsychoV(color, apply_grade);
-  } else {
-    // EOTF emulation is applied to the color BEFORE display mapping in both mapper modes, so
-    // the Gamma Correction slider behaves identically regardless of the Tone Mapper choice.
-    color = ApplyEotfEmulation(color);
-    const float3 pre_map = color;
-    if (injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS_NEUTWO) {
-      color = ApplyRenoDXNeutwo(color);
-    } else {
-      color = ApplyRenoDXPeakRolloff(color);
-    }
-    // Adaptive per-channel highlight emulation (PsychoV23 signed-opponent retention) on the
-    // hue-preserving max-channel display map. Always on for Vanilla+ / Neutwo, on the scene AND
-    // the menu/loading presents, but NOT on cinematics: the FMV decode callback flags
-    // custom_video_active for the frame and videos keep their vanilla look. gamut_compression = 1
-    // to the BT.2020 hull: the retention re-injects source chroma at high luminance, and the
-    // compression folds any past-hull result in gracefully instead of the PQ encode clamping it.
-    if (apply_grade || injectedData.custom_video_active == 0.f) {
-      const float peak_ratio = max(injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f), 1.001f);
-      const float3 anchor_lms = renodx::color::lms::from::BT709(0.18f.xxx);
-      color = renodx::color::bt709::from::LMS(
-          ApplyPsycho23SignedOpponentRetentionAndGamutCompressionLMS(
-              renodx::color::lms::from::BT709(pre_map),
-              renodx::color::lms::from::BT709(color),
-              anchor_lms,
-              anchor_lms,
-              renodx::color::lms::from::BT709(peak_ratio.xxx),
-              renodx::color::macleod_boynton::BT2020_TO_LMS_WEIGHTED_MAT,
-              1.f,
-              1.f));
-    }
-  }
-  float3 scene_nits = max(0.f, color) * max(injectedData.diffuse_white_nits, 1.f);
-  return renodx::color::pq::EncodeSafe(renodx::color::bt2020::from::BT709(scene_nits), 1.f);
+  return EncodeRenoDXHDR10(ApplyRenoDXPsychoV(color, apply_grade));
 }
 
 // Faithful Decima OETF output. output_mode = int(oetf3.x):

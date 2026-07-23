@@ -61,14 +61,19 @@ struct PSOutput {
   float luma : SV_Target1;
 };
 
-// Vanilla LUT sample (scale/bias + lod = coord.z) or opt-in tetrahedral interpolation.
-// Tetrahedral takes the raw color (pre scale/bias) and reads dimensions itself.
-float3 SampleHzdLut(float3 pre_lut_color) {
+// Exact vanilla LUT sample: preserve scale/bias, the coordinate-derived LOD, and
+// trilinear filtering for Vanilla+ regardless of stale user LUT settings.
+float3 SampleVanillaHzdLut(float3 pre_lut_color) {
+  const float3 coord = pre_lut_color * Rgb3dLookupScaleBias.x + Rgb3dLookupScaleBias.y;
+  return Rgb3dLookupTexture.SampleLevel(Rgb3dLookupSampler, coord, coord.z).rgb;
+}
+
+// Alternative modes retain the existing opt-in tetrahedral interpolation.
+float3 SampleConfiguredHzdLut(float3 pre_lut_color) {
   if (injectedData.custom_lut_tetrahedral == 1.f) {
     return renodx::lut::SampleTetrahedral(Rgb3dLookupTexture, pre_lut_color, 0.f);
   }
-  const float3 coord = pre_lut_color * Rgb3dLookupScaleBias.x + Rgb3dLookupScaleBias.y;
-  return Rgb3dLookupTexture.SampleLevel(Rgb3dLookupSampler, coord, coord.z).rgb;
+  return SampleVanillaHzdLut(pre_lut_color);
 }
 
 float3 ApplyNativeHighlightExpansion(float3 color, float highlight_weight, float debug_mask) {
@@ -173,13 +178,24 @@ PSOutput main(PSInput input) {
   const float3 light_shaft_term = LightShaftColor * LightShaftIntensity * light_shaft * injectedData.fx_light_shaft;
   const float3 pre_lut_color = saturate(1.f - saturate(1.f - light_shaft_term) * saturate(1.f - compressed_color));
 
-  float3 lut_color = SampleHzdLut(pre_lut_color);
+  const bool vanilla_plus =
+      injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS;
+  const bool customized =
+      injectedData.tone_map_type == HZD_TONE_MAP_TYPE_CUSTOMIZED;
+  float3 lut_color = vanilla_plus
+                         ? SampleVanillaHzdLut(pre_lut_color)
+                         : SampleConfiguredHzdLut(pre_lut_color);
   const float compressed_luma = LumaDecima(compressed_color);
   const float highlight_weight = saturate((LumaDecima(lut_color) * 8.f) - 4.f)
                                  * saturate((max(source_luma_scaled / (compressed_luma + 9.999999960041972e-13f), 0.f) - 1.f) * 0.03999999910593033f);
 
   lut_color = saturate(lut_color);
-  lut_color = lerp(pre_lut_color, lut_color, saturate(injectedData.color_grade_lut_strength));
+  if (!vanilla_plus) {
+    lut_color = lerp(
+        pre_lut_color,
+        lut_color,
+        saturate(injectedData.color_grade_lut_strength));
+  }
 
   float debug_mask;
   lut_color = ApplyDebugRamp(lut_color, input.texcoord, debug_mask);
@@ -187,7 +203,16 @@ PSOutput main(PSInput input) {
   const int output_mode = int(OETFSettings3.x);
   float3 output_color;
 
-  if (output_mode == 2 && injectedData.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA) {
+  if (output_mode == 2 && vanilla_plus) {
+    if (HdrOutputControl.y >= 0.f) {
+      lut_color = ApplyCalibratedNativeExpansion(
+          lut_color,
+          LumaDecima(lut_color),
+          highlight_weight,
+          debug_mask);
+    }
+    output_color = ApplyRenoDXStandardOutput(lut_color, true);
+  } else if (output_mode == 2 && injectedData.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA) {
     // Hue-preserving LUT bridge: same compression curve as the active vanilla gate, but computed
     // on the brightest channel and applied as a uniform RGB scale, so the LUT coordinate keeps
     // the source hue instead of collapsing saturated highlights toward white. In-gamut pixels
@@ -206,20 +231,52 @@ PSOutput main(PSInput input) {
     }
     const float3 bridged = color * bridge_scale;
     const float3 bridge_pre_lut = saturate(1.f - saturate(1.f - light_shaft_term) * saturate(1.f - bridged));
-    float3 bridge_lut = saturate(SampleHzdLut(bridge_pre_lut));
+    float3 bridge_lut = saturate(SampleConfiguredHzdLut(bridge_pre_lut));
     bridge_lut = lerp(bridge_pre_lut, bridge_lut, saturate(injectedData.color_grade_lut_strength));
     bridge_lut = ApplyDebugRamp(bridge_lut, input.texcoord, debug_mask);
-    // Luminance-match against the native expansion: brightness comes straight from the
-    // native-expanded vanilla result, hue/saturation from the bridge LUT sample, so the
-    // bridge never shifts measured nits.
-    // Mirror the vanilla reconstruction gate: when the game disables its HDR reconstruction
-    // (HdrOutputControl.y < 0), vanilla skips the highlight expansion - so must our luma target.
-    const float3 vanilla_expanded = (HdrOutputControl.y >= 0.f)
-                                        ? ApplyNativeHighlightExpansion(lut_color, highlight_weight, debug_mask)
-                                        : lut_color;
-    const float luma_target = LumaDecima(vanilla_expanded);
-    const float3 hue_matched = renodx::color::correct::Luminance(bridge_lut, LumaDecima(bridge_lut), luma_target);
-    output_color = ApplyRenoDXFixedHDR10(hue_matched, true);
+    float luma_target;
+    if (customized) {
+      // Customized keeps the vanilla LUT brightness, but calibrates the active native
+      // expansion to Peak/Game in the same inverse-gamma domain as Vanilla+.
+      const NativeExpansionLuma expansion =
+          EvaluateNativeExpansionLuma(LumaDecima(lut_color), highlight_weight);
+      luma_target = HdrOutputControl.y >= 0.f
+                        ? lerp(expansion.source, expansion.mapped, debug_mask)
+                        : LumaDecima(lut_color);
+    } else {
+      // Preserve the existing PsychoV-24 input exactly until that mapper gets its own plan.
+      const float3 vanilla_expanded = HdrOutputControl.y >= 0.f
+                                          ? ApplyNativeHighlightExpansion(lut_color, highlight_weight, debug_mask)
+                                          : lut_color;
+      luma_target = LumaDecima(vanilla_expanded);
+    }
+
+    float3 hue_matched = renodx::color::correct::Luminance(
+        bridge_lut,
+        LumaDecima(bridge_lut),
+        luma_target);
+    if (customized) {
+      // PsychoV23 signed-opponent retention restores adaptive highlight hue between the
+      // unbounded bridge and its calibrated luminance target, then compresses to BT.2020.
+      const float3 anchor_lms = renodx::color::lms::from::BT709(0.18f.xxx);
+      hue_matched = renodx::color::bt709::from::LMS(
+          ApplyPsycho23SignedOpponentRetentionAndGamutCompressionLMS(
+              renodx::color::lms::from::BT709(
+                  renodx::math::DivideSafe(
+                      bridge_lut,
+                      bridge_scale.xxx,
+                      bridge_lut)),
+              renodx::color::lms::from::BT709(hue_matched),
+              anchor_lms,
+              anchor_lms,
+              renodx::color::lms::from::BT709(NativeExpansionCap().xxx),
+              renodx::color::macleod_boynton::BT2020_TO_LMS_WEIGHTED_MAT,
+              1.f,
+              1.f));
+      output_color = ApplyRenoDXStandardOutput(hue_matched, true);
+    } else {
+      output_color = ApplyRenoDXPsychoVOutput(hue_matched, true);
+    }
   } else {
     if (HdrOutputControl.y >= 0.f) {
       lut_color = ApplyVanillaHDRCompression(lut_color, highlight_weight, debug_mask);

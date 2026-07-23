@@ -4,9 +4,9 @@
 // The vanilla SDR branch decodes with proper piecewise sRGB, but the vanilla HDR branch
 // (cHDROutputControl.x > 0) decodes with a plain 2.2 power before the native highlight expansion,
 // crushing video shadows relative to the SDR reference. In non-Vanilla modes the HDR branch decodes
-// with the same piecewise sRGB as SDR; the expansion and its x20 scale are untouched. Output stays
-// linear and feeds the (intercepted) output pass 0x29103068. Note: this pass uses Rec.709 luma
-// weights, not the Decima weights of the scene composite.
+// with the same piecewise sRGB as SDR. Vanilla+ and Customized also calibrate the native expansion
+// to Peak/Game; PsychoV-24 retains its existing x20 behavior. Output stays linear and feeds the
+// intercepted output pass 0x29103068. This pass uses Rec.709 luma, not the scene's Decima weights.
 
 Texture2D<float4> YPlane : register(t16);
 Texture2D<float4> CbPlane : register(t17);
@@ -58,17 +58,26 @@ float4 main(PSInput input) : SV_Target {
       decoded = pow(abs(rgb), 2.200000f);
     }
 
-    // Native highlight expansion, bit-exact to the original (Rec.709 luma, x20 final scale).
-    const float expansion_luma = min(dot(decoded, float3(0.212600f, 0.715200f, 0.072200f)), 1.f);
-    const float shoulder = (log2(1.f - (expansion_luma * 0.981684327f)) * -0.693147182f) / (expansion_luma + 0.000010f);
-    const float native_peak = (weight * 24.f) + 1.f;
-    const float weight_sat = saturate(weight);
-    const float smooth_weight = ((-weight_sat * 2.f) + 3.f) * (weight_sat * weight_sat);
-    const float expansion = (smooth_weight * (native_peak - shoulder)) + shoulder;
-    const float expansion_scaled = expansion * 0.040000f;
-    const float expansion_curve = ((-expansion * 0.040000f) + 1.f) * expansion_scaled + 1.f;
-    const float scale = (expansion_scaled * expansion_curve) * 20.f;
-    output_color = decoded * scale;
+    if (injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS
+        || injectedData.tone_map_type == HZD_TONE_MAP_TYPE_CUSTOMIZED) {
+      output_color = ApplyCalibratedNativeExpansion(
+          decoded,
+          dot(decoded, float3(0.212600f, 0.715200f, 0.072200f)),
+          weight,
+          1.f);
+    } else {
+      // Native highlight expansion, bit-exact to the original (Rec.709 luma, x20 final scale).
+      const float expansion_luma = min(dot(decoded, float3(0.212600f, 0.715200f, 0.072200f)), 1.f);
+      const float shoulder = (log2(1.f - (expansion_luma * 0.981684327f)) * -0.693147182f) / (expansion_luma + 0.000010f);
+      const float native_peak = (weight * 24.f) + 1.f;
+      const float weight_sat = saturate(weight);
+      const float smooth_weight = ((-weight_sat * 2.f) + 3.f) * (weight_sat * weight_sat);
+      const float expansion = (smooth_weight * (native_peak - shoulder)) + shoulder;
+      const float expansion_scaled = expansion * 0.040000f;
+      const float expansion_curve = ((-expansion * 0.040000f) + 1.f) * expansion_scaled + 1.f;
+      const float scale = (expansion_scaled * expansion_curve) * 20.f;
+      output_color = decoded * scale;
+    }
   } else {
     output_color = DecodeSRGBPiecewise(rgb);
   }

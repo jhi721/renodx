@@ -3,7 +3,7 @@
 
 // Must be 32-bit aligned.
 struct ShaderInjectData {
-  float tone_map_type;  // 0 = Vanilla, 1 = Vanilla+, 2 = Vanilla+ (Neutwo), 3 = Vanilla+ (PsychoV-24)
+  float tone_map_type;  // 0 = Vanilla, 1 = Vanilla+, 2 = Vanilla+ (Customized), 3 = Vanilla+ (PsychoV-24)
   float peak_white_nits;
   float diffuse_white_nits;
   float gamma_correction;  // 0 = Off, 1 = 2.2, 2 = BT.1886
@@ -31,7 +31,7 @@ cbuffer shader_injection : register(b0, space50) {
 
 #define HZD_TONE_MAP_TYPE_VANILLA 0.f
 #define HZD_TONE_MAP_TYPE_VANILLA_PLUS 1.f
-#define HZD_TONE_MAP_TYPE_VANILLA_PLUS_NEUTWO 2.f
+#define HZD_TONE_MAP_TYPE_CUSTOMIZED 2.f
 #define HZD_TONE_MAP_TYPE_VANILLA_PLUS_PSYCHOV 3.f
 
 #include "../../shaders/renodx.hlsl"
