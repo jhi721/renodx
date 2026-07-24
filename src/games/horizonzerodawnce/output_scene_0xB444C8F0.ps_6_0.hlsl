@@ -273,6 +273,12 @@ PSOutput main(PSInput input) {
               renodx::color::macleod_boynton::BT2020_TO_LMS_WEIGHTED_MAT,
               1.f,
               1.f));
+      // PsychoV23 retains MacLeod-Boynton Yf while changing chromaticity. Restore
+      // the authoritative Decima luminance with a uniform RGB scale.
+      hue_matched = renodx::color::correct::Luminance(
+          hue_matched,
+          LumaDecima(hue_matched),
+          luma_target);
       output_color = ApplyRenoDXStandardOutput(hue_matched, true);
     } else {
       output_color = ApplyRenoDXPsychoVOutput(hue_matched, true);
