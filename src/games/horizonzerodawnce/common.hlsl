@@ -180,14 +180,22 @@ float3 ApplyEotfEmulation(float3 color) {
   return color;
 }
 
-float PeakRatio() {
+// Display-map math requires at least a small amount of headroom.
+float ToneMapPeakRatio() {
   return max(injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f), 1.001f);
 }
 
+// Physical output ceiling. Unlike the display-map ratio, this must honor Peak
+// Brightness exactly even when Game Brightness is configured above it.
+float OutputPeakRatio() {
+  return max(injectedData.peak_white_nits, 0.f)
+         / max(injectedData.diffuse_white_nits, 1.f);
+}
+
 // Native expansion runs before EOTF emulation. Move the selected display peak into
-// that internal domain so ApplyEotfEmulation maps the ceiling back to PeakRatio().
+// that internal domain so ApplyEotfEmulation maps the ceiling back to ToneMapPeakRatio().
 float NativeExpansionCap() {
-  float cap = PeakRatio();
+  float cap = ToneMapPeakRatio();
   if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
     cap = renodx::color::correct::GammaSafe(cap, true, 2.2f);
   } else if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
@@ -203,8 +211,9 @@ struct NativeExpansionLuma {
 };
 
 // HZDCE native highlight expansion, normalized from its fixed x20 output scale to
-// the selected Peak/Game ratio. At cap=20 with gamma correction off this is the
-// original curve. The low-headroom guard prevents the recalibration from dimming.
+// the selected Peak/Game ratio. Calibration fades from identity at cap=1 to the
+// exact native curve at cap=20, retaining its midtone dip without adding low-headroom
+// dimming. Above cap=20 the native result scales into the additional headroom.
 NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float highlight_weight) {
   NativeExpansionLuma result;
   result.source = saturate(source_luma);
@@ -219,9 +228,18 @@ NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float highlig
   const float expansion = (smooth_weight * (native_peak - shoulder)) + shoulder;
   const float expansion_scaled = expansion * 0.04f;
   const float expansion_curve = 1.f + ((1.f - expansion_scaled) * expansion_scaled);
-  const float mapped = result.source * expansion_scaled * expansion_curve * result.cap;
+  const float native_mapped =
+      result.source * expansion_scaled * expansion_curve * 20.f;
 
-  result.mapped = clamp(mapped, result.source, result.cap);
+  float mapped;
+  if (result.cap <= 20.f) {
+    const float headroom_weight = saturate((result.cap - 1.f) / 19.f);
+    mapped = lerp(result.source, native_mapped, headroom_weight);
+  } else {
+    mapped = native_mapped * (result.cap / 20.f);
+  }
+
+  result.mapped = min(mapped, result.cap);
   return result;
 }
 
@@ -242,7 +260,7 @@ float3 ApplyCalibratedNativeExpansion(
 }
 
 float3 ApplyPeakSafetyCap(float3 color) {
-  const float peak_ratio = PeakRatio();
+  const float peak_ratio = OutputPeakRatio();
   const float peak_channel = renodx::math::Max(color);
   if (peak_channel > peak_ratio) color *= peak_ratio / peak_channel;
   return color;
@@ -517,7 +535,7 @@ float3 ApplyPsycho23SignedOpponentRetentionAndGamutCompressionLMS(
 // emulation is bypassed in this mode; gamut compresses to the BT.2020 hull. Consumes the same
 // reconstructed color as the other mappers.
 float3 ApplyRenoDXPsychoV(float3 color, bool apply_grade) {
-  float peak = max(injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f), 1.001f);
+  float peak = ToneMapPeakRatio();
   if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
     peak = renodx::color::correct::GammaSafe(peak, true, 2.2f);
   } else if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
