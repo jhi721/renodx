@@ -1,0 +1,25 @@
+{
+  "$schema": "https://cdn.jsdelivr.net/gh/clshortfuse/renodx/renodx-metadata-schema.json",
+  "id": "horizonzdr-fwce",
+  "title": "Horizon Zero Dawn Remastered & Forbidden West Complete Edition",
+  "maintainers": [
+    "DristoforColumb"
+  ],
+  "status": "experimental",
+  "games": [
+    {
+      "title": "Horizon Zero Dawn Remastered",
+      "status": "experimental",
+      "deploy": {
+        "steam_appid": 2561580
+      }
+    },
+    {
+      "title": "Horizon Forbidden West Complete Edition",
+      "status": "experimental",
+      "deploy": {
+        "steam_appid": 2420110
+      }
+    }
+  ]
+}
