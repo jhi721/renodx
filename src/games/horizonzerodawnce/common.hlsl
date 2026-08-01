@@ -4,21 +4,19 @@
 #include "./shared.h"
 #include "./psycho_test24.hlsli"
 
-// Shared output-transform helpers for the Decima final passes. Both the scene composite
-// (0xB444C8F0) and the standalone menu/video output (0x29103068) end in the SAME OETF
-// transform and, in non-Vanilla modes, the SAME RenoDX HDR encode — kept here so the two shaders
-// cannot drift.
-
-// The game's own luma weights - not Rec.709 (the FMV decode pass is the one exception).
+// Color pipeline shared by every replaced pass: the invertible max-channel LUT bridge and
+// per-channel display map the scene composite runs, the HDR10 encode they all end on, and the
+// native expansion the FMV decode keeps.
+//
+// The game's own luma weights, not Rec.709 - the FMV decode is the one exception.
 static const float3 DECIMA_LUMA = float3(0.3086000084877014f, 0.6093999743461609f, 0.0820000022649765f);
 
 float LumaDecima(float3 color) {
   return dot(color, DECIMA_LUMA);
 }
 
-// Local encoders duplicate renodx::color::{srgb,pq} on purpose: they carry the game's exact
-// Decima literals for the bit-exact ApplyVanillaOutput path; the non-Vanilla path uses
-// renodx::color::pq::EncodeSafe instead.
+// Local encoders duplicate renodx::color::{srgb,pq} on purpose: they carry the game's exact Decima
+// literals for the bit-exact ApplyVanillaOutput path, which still runs in SDR output mode.
 float EncodeSRGBChannel(float color) {
   return color < 0.003100000089034438f
              ? color * 12.920000076293945f
@@ -64,8 +62,7 @@ float Shadows(float x, float shadows, float mid_gray) {
   }
 }
 
-// Luminance-domain exposure / contrast / flare / highlights / shadows. Split from the saturation
-// half so the color half below can take an explicit per-channel reference.
+// Luminance-domain exposure / contrast / flare / highlights / shadows.
 float3 ApplyExposureContrastFlareHighlightsShadowsByLuminance(float3 untonemapped, float y, renodx::color::grade::Config config, float mid_gray = 0.18f) {
   if (config.exposure == 1.f && config.shadows == 1.f && config.highlights == 1.f && config.contrast == 1.f && config.flare == 0.f) {
     return untonemapped;
@@ -87,35 +84,12 @@ float3 ApplyExposureContrastFlareHighlightsShadowsByLuminance(float3 untonemappe
   return color;
 }
 
-// Saturation / Dechroma / Highlight Saturation. The generic hue-correction and chrominance-emulation
-// slots are still present in this helper, but this add-on keeps them disabled; adaptive highlight
-// hue/blow emulation is applied after the display map instead.
-float3 ApplySaturationBlowoutHueCorrectionHighlightSaturation(float3 tonemapped, float3 untonemapped, float y, renodx::color::grade::Config config, float chrominance_emulation = 0.f) {
+// Saturation / Dechroma / Highlight Saturation. Hue correction is not part of this add-on's grade;
+// highlight hue and blow-out are emulated after the display map instead.
+float3 ApplySaturationBlowoutHighlightSaturation(float3 tonemapped, float y, renodx::color::grade::Config config) {
   float3 color = tonemapped;
-  if (config.saturation != 1.f || config.dechroma != 0.f || config.hue_correction_strength != 0.f || config.blowout != 0.f || chrominance_emulation != 0.f) {
+  if (config.saturation != 1.f || config.dechroma != 0.f || config.blowout != 0.f) {
     float3 perceptual_new = renodx::color::oklab::from::BT709(color);
-
-    if (config.hue_correction_strength != 0.0 || chrominance_emulation != 0.0) {
-      const float3 reference_oklab = renodx::color::oklab::from::BT709(untonemapped);
-
-      float chrominance_current = length(perceptual_new.yz);
-      float chrominance_ratio = 1.0;
-
-      if (config.hue_correction_strength != 0.0) {
-        const float chrominance_pre = chrominance_current;
-        perceptual_new.yz = lerp(perceptual_new.yz, reference_oklab.yz, config.hue_correction_strength);
-        const float chrominancePost = length(perceptual_new.yz);
-        chrominance_ratio = renodx::math::SafeDivision(chrominance_pre, chrominancePost, 1);
-        chrominance_current = chrominancePost;
-      }
-
-      if (chrominance_emulation != 0.0) {
-        const float reference_chrominance = length(reference_oklab.yz);
-        float target_chrominance_ratio = renodx::math::SafeDivision(reference_chrominance, chrominance_current, 1);
-        chrominance_ratio = lerp(chrominance_ratio, target_chrominance_ratio, chrominance_emulation);
-      }
-      perceptual_new.yz *= chrominance_ratio;
-    }
 
     if (config.dechroma != 0.f) {
       perceptual_new.yz *= lerp(1.f, 0.f, saturate(pow(y / (10000.f / 100.f), (1.f - config.dechroma))));
@@ -142,82 +116,158 @@ float3 ApplySaturationBlowoutHueCorrectionHighlightSaturation(float3 tonemapped,
   return color;
 }
 
-// Grade in two halves so Highlight Saturation can key off luminance. The per-channel highlight
-// hue-shift + blowout emulation lives on the Customized scene bridge, NOT here - so this stage
-// never pulls hue/chrominance toward a reference (hue_correction_strength /
-// chrominance_emulation stay 0). Only Exposure/Highlights/Shadows/Contrast/Flare (luminance)
-// + Saturation/Dechroma/Highlight Saturation (chroma) run here.
+// Grade in two halves so Highlight Saturation can key off the luminance the first half measured.
 float3 ApplyRenoDXGrade(float3 color) {
-  // PsychoV (mode 3) tone-maps in its own perceptual pipeline: Saturation rides its purity_scale
-  // (kept out of the grade here so it survives the chroma compression).
-  const bool psychov = injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS_PSYCHOV;
-
   renodx::color::grade::Config cg = renodx::color::grade::config::Create();
   cg.exposure = injectedData.color_grade_exposure;
   cg.highlights = injectedData.color_grade_highlights;
   cg.shadows = injectedData.color_grade_shadows;
   cg.contrast = injectedData.color_grade_contrast;
   cg.flare = injectedData.color_grade_flare;
-  cg.saturation = psychov ? 1.f : injectedData.color_grade_saturation;
+  cg.saturation = injectedData.color_grade_saturation;
   cg.dechroma = injectedData.color_grade_dechroma;
-  cg.hue_correction_strength = 0.f;
   // Highlight Saturation is centered at 1.0 and drives the luminance-keyed blowout slot negative.
   cg.blowout = -1.f * (injectedData.color_grade_highlight_saturation - 1.f);
 
   const float y = renodx::color::y::from::BT709(color);
   color = ApplyExposureContrastFlareHighlightsShadowsByLuminance(color, y, cg);
-  // No reference pull here (hue/chrominance emulation off); pass color as the unused reference.
-  color = ApplySaturationBlowoutHueCorrectionHighlightSaturation(color, color, y, cg, 0.f);
-  return color;
+  return ApplySaturationBlowoutHighlightSaturation(color, y, cg);
 }
 
+// The exponent behind each Gamma Correction setting. Read by both the EOTF emulation and
+// InternalPeakRatio, so a new mode needs an entry here and nowhere else.
+float GammaCorrectionExponent() {
+  if (injectedData.gamma_correction == HZD_GAMMA_CORRECTION_2_2) return 2.2f;
+  if (injectedData.gamma_correction == HZD_GAMMA_CORRECTION_BT1886) return 2.4f;
+  return 0.f;  // Off
+}
+
+// Emulates the per-channel display EOTF used by the game's own encode.
 float3 ApplyEotfEmulation(float3 color) {
-  if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
-    color = renodx::color::correct::GammaSafe(color, false, 2.2f);
-  } else if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
-    color = renodx::color::correct::GammaSafe(color, false, 2.4f);
+  const float gamma = GammaCorrectionExponent();
+  if (gamma == 0.f) return color;
+
+  return renodx::color::correct::GammaSafe(color, false, gamma);
+}
+
+// Display headroom over Game Brightness, and the output ceiling. Not floored at 1: a peak below
+// Game Brightness has to keep clamping to the peak, or the encode sends more nits than the display
+// can show.
+float PeakRatio() {
+  return injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f);
+}
+
+// PeakRatio inverted through the gamma emulation. The native FMV expansion and PsychoV cap on this
+// one rather than on PeakRatio, so that running the forward gamma on their output lands highlights
+// back exactly on PeakRatio instead of past it.
+float InternalPeakRatio() {
+  const float gamma = GammaCorrectionExponent();
+  if (gamma == 0.f) return PeakRatio();
+  return renodx::color::correct::GammaSafe(PeakRatio(), true, gamma);
+}
+
+static const float HZD_DISPLAY_MAP_CLIP = 100.f;
+
+// The add-on's only display map and HDR10 encode. Every replaced pass ends here: scene composite,
+// the menu/FMV/loading encoder, and - through that encoder - the FMV decode.
+//
+// Input is scene-relative linear BT.709 where 1.0 is Game Brightness, already graded and
+// EOTF-emulated. The scene is mapped per channel; menus and FMV arrive display-mapped already and
+// only need the peak clamp.
+float3 FinalizeOutput(float3 color, bool apply_display_map = false) {
+  color = max(0.f, color);
+  const float3 source_bt709 = color;
+
+  if (apply_display_map) {
+    color = min(
+        renodx::tonemap::neutwo::PerChannel(color, PeakRatio().xxx, HZD_DISPLAY_MAP_CLIP.xxx),
+        PeakRatio().xxx);
   }
-  return color;
-}
 
-// Display-map math requires at least a small amount of headroom.
-float ToneMapPeakRatio() {
-  return max(injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f), 1.001f);
-}
+  color = renodx::color::bt2020::from::BT709(color);
 
-// Physical output ceiling. Unlike the display-map ratio, this must honor Peak
-// Brightness exactly even when Game Brightness is configured above it.
-float OutputPeakRatio() {
-  return max(injectedData.peak_white_nits, 0.f)
-         / max(injectedData.diffuse_white_nits, 1.f);
-}
+  if (apply_display_map
+      && (injectedData.tone_map_hue_shift != 1.f || injectedData.tone_map_blowout != 1.f)) {
+    const float3 mb_source = renodx::color::macleod_boynton::from::BT709(source_bt709);
+    const float3 mb_mapped = renodx::color::macleod_boynton::from::BT2020(color);
+    const float2 white = renodx::color::macleod_boynton::from::D65XY();
 
-// Native expansion runs before EOTF emulation. Move the selected display peak into
-// that internal domain so ApplyEotfEmulation maps the ceiling back to ToneMapPeakRatio().
-float NativeExpansionCap() {
-  float cap = ToneMapPeakRatio();
-  if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
-    cap = renodx::color::correct::GammaSafe(cap, true, 2.2f);
-  } else if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
-    cap = renodx::color::correct::GammaSafe(cap, true, 2.4f);
+    const float2 dir_source = mb_source.xy - white;
+    const float2 dir_mapped = mb_mapped.xy - white;
+    const float len_source = length(dir_source);
+    const float len_mapped = length(dir_mapped);
+
+    // Neutral in either frame: no direction to steer and no purity to restore.
+    if (len_source > 1e-6f && len_mapped > 1e-6f) {
+      // Hue Shift only turns the vector - both terms carry the mapped purity.
+      const float2 dir = lerp(
+          dir_source * (len_mapped / len_source), dir_mapped, injectedData.tone_map_hue_shift);
+      const float len_dir = length(dir);
+      // Blowout picks the purity: 1 keeps what the map produced, 0 puts the source's back.
+      const float len_final = lerp(len_source, len_mapped, injectedData.tone_map_blowout);
+
+      if (len_dir > 1e-6f) {
+        // Purity restored at the mapped luminance can leave a channel negative; the ceiling is
+        // held by the clamp below.
+        color = max(0.f, renodx::color::bt2020::from::MacLeodBoynton(
+                             white + dir * (len_final / len_dir), mb_mapped.z));
+      }
+    }
   }
-  return cap;
+
+  color = min(color, PeakRatio());
+
+  // scaling carries Game Brightness: Encode multiplies by scaling/10000 internally.
+  return renodx::color::pq::EncodeSafe(color, injectedData.diffuse_white_nits);
+}
+
+float3 ApplyRenoDXStandardOutput(float3 color, bool apply_display_map = false, bool apply_grade = true) {
+  if (apply_grade) color = ApplyRenoDXGrade(color);
+  color = ApplyEotfEmulation(color);
+  return FinalizeOutput(color, apply_display_map);
+}
+
+// PsychoV replaces both the user grade and the display map: test24 applies exposure, highlights,
+// shadows, contrast and purity itself, then compresses to peak in cone space. Peak is the internal
+// one because the gamma emulation is inverted into it - running the forward gamma on the output is
+// what lands highlights back on peak_ratio.
+float3 ApplyPsychoVOutput(float3 color) {
+  color = renodx_custom::tonemap::psychov::psychotm_test24(
+      color, InternalPeakRatio(),
+      injectedData.color_grade_exposure,
+      injectedData.color_grade_highlights,
+      injectedData.color_grade_shadows,
+      injectedData.color_grade_contrast,
+      injectedData.color_grade_saturation,  // purity_scale; test24 divides it by contrast
+      1.f, 100.f, 1.f,                      // bleaching / clip / hue_restore - unread
+      1.f,                                  // adaptation_contrast
+      0,                                    // white_curve_mode - unread
+      1.f,                                  // cone_response_exponent
+      0.18f.xxx, 0.18f.xxx,                 // adaptive and background state at mid grey
+      1.f,                                  // gamut_compression, always full
+      1,                                    // gamut bound = BT.2020, matches the output
+      1.f,                                  // adaptive_normalization - unread
+      0.f,                                  // compression = auto
+      1.f,                                  // highlight_saturation - unread
+      0.f);                                 // gamut_hue_restore off
+
+  return FinalizeOutput(ApplyEotfEmulation(color), false);
 }
 
 struct NativeExpansionLuma {
-  float source;
-  float mapped;
-  float cap;
+  float source;  // Input luma, clamped to 0..1
+  float mapped;  // After the expansion, clamped to the cap
+  float cap;     // Ceiling in the pre-gamma domain
 };
 
-// HZDCE native highlight expansion, normalized from its fixed x20 output scale to
-// the selected Peak/Game ratio. Calibration fades from identity at cap=1 to the
-// exact native curve at cap=20, retaining its midtone dip without adding low-headroom
-// dimming. Above cap=20 the native result scales into the additional headroom.
+// The game's native highlight expansion, normalized from its fixed x20 output scale to the selected
+// Peak / Game Brightness ratio. Calibration fades from identity at cap = 1 to the exact native curve
+// at cap = 20, retaining its midtone dip without adding low-headroom dimming. Above cap = 20 the
+// native result scales into the additional headroom.
 NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float highlight_weight) {
   NativeExpansionLuma result;
   result.source = saturate(source_luma);
-  result.cap = NativeExpansionCap();
+  result.cap = InternalPeakRatio();
 
   const float shoulder =
       (log2(1.f - (result.source * 0.9816843271255493f)) * -0.6931471824645996f)
@@ -228,8 +278,7 @@ NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float highlig
   const float expansion = (smooth_weight * (native_peak - shoulder)) + shoulder;
   const float expansion_scaled = expansion * 0.04f;
   const float expansion_curve = 1.f + ((1.f - expansion_scaled) * expansion_scaled);
-  const float native_mapped =
-      result.source * expansion_scaled * expansion_curve * 20.f;
+  const float native_mapped = result.source * expansion_scaled * expansion_curve * 20.f;
 
   float mapped;
   if (result.cap <= 20.f) {
@@ -259,312 +308,52 @@ float3 ApplyCalibratedNativeExpansion(
   return color * (mapped / expansion.source);
 }
 
-float3 ApplyPeakSafetyCap(float3 color) {
-  const float peak_ratio = OutputPeakRatio();
-  const float peak_channel = renodx::math::Max(color);
-  if (peak_channel > peak_ratio) color *= peak_ratio / peak_channel;
-  return color;
-}
-
-float3 EncodeRenoDXHDR10(float3 color) {
-  const float3 scene_nits = max(0.f, color) * max(injectedData.diffuse_white_nits, 1.f);
-  return renodx::color::pq::EncodeSafe(
-      renodx::color::bt2020::from::BT709(scene_nits),
-      1.f);
-}
-
-// Standard Vanilla+ output: optional user grading, corrected EOTF emulation,
-// a hue-preserving peak ceiling, and fixed PQ.
-float3 ApplyRenoDXStandardOutput(float3 color, bool apply_grade) {
-  if (apply_grade) color = ApplyRenoDXGrade(color);
-  color = ApplyEotfEmulation(color);
-  return EncodeRenoDXHDR10(ApplyPeakSafetyCap(color));
-}
-
-// PsychoV23-style signed-opponent retention for adaptive highlight hue/blow emulation. white_progress
-// is derived from the ACTUAL display-map output in the auto-compression power domain, so the emulation
-// strengthens as the configured peak drops and needs no per-game hand tuning.
-
-static const float PSYCHO23_LOCAL_EPSILON = 1e-6f;
-static const float PSYCHO23_LOCAL_REFERENCE_SIMULTANEOUS_RANGE_LOG10 = 3.7f;
-static const float PSYCHO23_LOCAL_REFERENCE_CENTERED_RANGE_SIDE_COUNT = 2.f;
-static const float PSYCHO23_LOCAL_HEADROOM_RATIO_FALLBACK = 1.f;
-static const float PSYCHO23_LOCAL_MIN_AUTO_COMPRESSION = 1.f;
-
-// Empirical signed-opponent appearance controls from PsychoV23.
-static const float PSYCHO23_LOCAL_RED_RETENTION = 1.5f;
-static const float PSYCHO23_LOCAL_GREEN_RETENTION = 2.f;
-static const float PSYCHO23_LOCAL_BLUE_RETENTION = 1.f;
-static const float PSYCHO23_LOCAL_YELLOW_RETENTION = 3.f;
-
-float Psycho23YfFromLMS(float3 lms) {
-  float3 weighted_lms = renodx::color::macleod_boynton::WeighLMS(lms);
-  return max(weighted_lms.x + weighted_lms.y, PSYCHO23_LOCAL_EPSILON);
-}
-
-float Psycho23AutoCompressionFromCenteredReferenceRange(float anchor_out_yf, float peak_yf) {
-  float peak_over_anchor = renodx::math::DivideSafe(
-      max(peak_yf, PSYCHO23_LOCAL_EPSILON),
-      max(anchor_out_yf, PSYCHO23_LOCAL_EPSILON),
-      PSYCHO23_LOCAL_HEADROOM_RATIO_FALLBACK);
-  peak_over_anchor = max(peak_over_anchor, 1.f + PSYCHO23_LOCAL_EPSILON);
-
-  float reference_one_side_range_log10 =
-      PSYCHO23_LOCAL_REFERENCE_SIMULTANEOUS_RANGE_LOG10
-      / PSYCHO23_LOCAL_REFERENCE_CENTERED_RANGE_SIDE_COUNT;
-  float actual_above_adaptation_range_log10 =
-      max(log10(peak_over_anchor), PSYCHO23_LOCAL_EPSILON);
-
-  return max(
-      reference_one_side_range_log10 / actual_above_adaptation_range_log10,
-      PSYCHO23_LOCAL_MIN_AUTO_COMPRESSION);
-}
-
-float3 Psycho23ToAdaptiveRelativeWeightedLMS(
-    float3 lms_input,
-    float3 current_adaptive_state_lms) {
-  return renodx::math::DivideSafe(
-      renodx::color::macleod_boynton::WeighLMS(lms_input),
-      current_adaptive_state_lms,
-      0.f.xxx);
-}
-
-float3 Psycho23FromAdaptiveRelativeWeightedLMS(
-    float3 lms_weighted_relative,
-    float3 current_adaptive_state_lms) {
-  return lms_weighted_relative * max(current_adaptive_state_lms, 1e-6f.xxx);
-}
-
-float3 Psycho23GamutCompressAdaptiveRelativeWeightedLMSBound(
-    float3 lms_weighted_relative_input,
-    float3 current_adaptive_state_lms,
-    float3x3 bound_rgb_to_lms_weighted_mat,
-    float strength) {
-  return renodx::color::gamut::GamutCompressWeightedLMSCoreRGBBoundFromAdaptiveWeightedInput(
-      lms_weighted_relative_input,
-      current_adaptive_state_lms,
-      bound_rgb_to_lms_weighted_mat,
-      strength);
-}
-
-float3 Psycho23AdaptiveRelativeWeightedNeutral() {
-  return renodx::color::macleod_boynton::WeighLMS(1.f.xxx);
-}
-
-float3 Psycho23OpponentACCFromWeightedDelta(float3 delta_weighted_lms) {
-  float3 neutral_weighted = Psycho23AdaptiveRelativeWeightedNeutral();
-  float m_to_l = renodx::math::DivideSafe(
-      neutral_weighted.x,
-      neutral_weighted.y,
-      0.f);
-  float s_to_lm = renodx::math::DivideSafe(
-      neutral_weighted.x + neutral_weighted.y,
-      neutral_weighted.z,
-      0.f);
-
-  return float3(
-      delta_weighted_lms.x + delta_weighted_lms.y,
-      delta_weighted_lms.x - m_to_l * delta_weighted_lms.y,
-      -delta_weighted_lms.x - delta_weighted_lms.y
-          + s_to_lm * delta_weighted_lms.z);
-}
-
-float3 Psycho23WeightedDeltaFromOpponentACC(float3 acc) {
-  float3 neutral_weighted = Psycho23AdaptiveRelativeWeightedNeutral();
-  float m_to_l = renodx::math::DivideSafe(
-      neutral_weighted.x,
-      neutral_weighted.y,
-      0.f);
-  float s_to_lm = renodx::math::DivideSafe(
-      neutral_weighted.x + neutral_weighted.y,
-      neutral_weighted.z,
-      0.f);
-
-  float delta_m = renodx::math::DivideSafe(acc.x - acc.y, 1.f + m_to_l, 0.f);
-  float delta_l = acc.x - delta_m;
-  float delta_s = renodx::math::DivideSafe(acc.z + acc.x, s_to_lm, 0.f);
-  return float3(delta_l, delta_m, delta_s);
-}
-
-float Psycho23SignedOpponentRetention(float white_progress, float retention_exponent) {
-  return 1.f - pow(saturate(white_progress), max(retention_exponent, PSYCHO23_LOCAL_EPSILON));
-}
-
-float3 Psycho23ApplySignedOpponentRetention(
-    float3 compressed_lms,
-    float3 source_lms,
-    float3 adaptive_state_lms,
-    float3 peak_lms,
-    float white_progress) {
-  if (white_progress <= 0.f
-      || min(source_lms.x, min(source_lms.y, source_lms.z)) <= 0.f) {
-    return compressed_lms;
+// Samples the game's grade LUT. The domain is the compressor's own output, not gamma 2, so the
+// coordinate is scaled and biased with no encode - and the vanilla LOD comes from the blue axis.
+float3 SampleHzdLut(Texture3D<float4> lut, SamplerState samp,
+                    float3 sdr_color, float lut_scale, float lut_bias) {
+  const float3 coord = sdr_color * lut_scale + lut_bias;
+  if (injectedData.custom_lut_tetrahedral != 0.f) {
+    return renodx::lut::SampleTetrahedral(lut, sdr_color, 0.f).rgb;
   }
-
-  float3 source_weighted = Psycho23ToAdaptiveRelativeWeightedLMS(
-      source_lms,
-      adaptive_state_lms);
-  float3 adapted_neutral = Psycho23AdaptiveRelativeWeightedNeutral();
-  float adapted_neutral_yf = adapted_neutral.x + adapted_neutral.y;
-  float source_yf = source_weighted.x + source_weighted.y;
-
-  if (source_yf <= PSYCHO23_LOCAL_EPSILON
-      || adapted_neutral_yf <= PSYCHO23_LOCAL_EPSILON) {
-    return compressed_lms;
-  }
-
-  float3 source_neutral = adapted_neutral
-                          * renodx::math::DivideSafe(source_yf, adapted_neutral_yf, 1.f);
-  float3 source_acc =
-      Psycho23OpponentACCFromWeightedDelta(source_weighted - source_neutral)
-      / source_yf;
-
-  float red_retention = Psycho23SignedOpponentRetention(
-      white_progress,
-      PSYCHO23_LOCAL_RED_RETENTION);
-  float green_retention = Psycho23SignedOpponentRetention(
-      white_progress,
-      PSYCHO23_LOCAL_GREEN_RETENTION);
-  float blue_retention = Psycho23SignedOpponentRetention(
-      white_progress,
-      PSYCHO23_LOCAL_BLUE_RETENTION);
-  float yellow_retention = Psycho23SignedOpponentRetention(
-      white_progress,
-      PSYCHO23_LOCAL_YELLOW_RETENTION);
-
-  float rg_out = max(source_acc.y, 0.f) * red_retention
-                 - max(-source_acc.y, 0.f) * green_retention;
-  float yv_out = max(source_acc.z, 0.f) * blue_retention
-                 - max(-source_acc.z, 0.f) * yellow_retention;
-
-  float3 compressed_weighted = Psycho23ToAdaptiveRelativeWeightedLMS(
-      compressed_lms,
-      adaptive_state_lms);
-  float target_yf = compressed_weighted.x + compressed_weighted.y;
-  if (target_yf <= PSYCHO23_LOCAL_EPSILON) {
-    return compressed_lms;
-  }
-
-  float3 peak_weighted = Psycho23ToAdaptiveRelativeWeightedLMS(
-      peak_lms,
-      adaptive_state_lms);
-  float peak_weighted_yf = peak_weighted.x + peak_weighted.y;
-  if (peak_weighted_yf <= PSYCHO23_LOCAL_EPSILON) {
-    return compressed_lms;
-  }
-
-  float3 target_neutral = peak_weighted * renodx::math::DivideSafe(target_yf, peak_weighted_yf, 1.f);
-  float3 target_delta = Psycho23WeightedDeltaFromOpponentACC(
-      float3(0.f, rg_out * target_yf, yv_out * target_yf));
-  float3 output_lms = renodx::color::macleod_boynton::UnweighLMS(
-      Psycho23FromAdaptiveRelativeWeightedLMS(
-          target_neutral + target_delta,
-          adaptive_state_lms));
-
-  float compressed_yf = Psycho23YfFromLMS(compressed_lms);
-  float output_yf = Psycho23YfFromLMS(output_lms);
-  if (output_yf <= PSYCHO23_LOCAL_EPSILON) {
-    return compressed_lms;
-  }
-
-  return output_lms * renodx::math::DivideSafe(compressed_yf, output_yf, 1.f);
+  return lut.SampleLevel(samp, coord, coord.z).rgb;
 }
 
-float3 ApplyPsycho23SignedOpponentRetentionAndGamutCompressionLMS(
-    float3 precompression_lms,
-    float3 compressed_lms,
-    float3 input_adaptive_state_lms,
-    float3 output_anchor_lms,
-    float3 peak_white_lms,
-    float3x3 gamut_bound_rgb_to_lms_weighted_mat,
-    float hue_restore = 1.f,
-    float gamut_compression = 1.f) {
-  float anchor_yf = Psycho23YfFromLMS(output_anchor_lms);
-  float peak_yf = Psycho23YfFromLMS(peak_white_lms);
-  float output_yf = Psycho23YfFromLMS(compressed_lms);
+struct SceneBridge {
+  float3 sdr;  // Scene in the LUT's SDR domain, light shafts blended in as the game blends them
+  float scale;  // The max-channel scale that produced it; 1/scale is the compressed headroom
+};
 
-  // Test23 measures white convergence in the compression power domain. Derive
-  // the same progress from the actual display-map output instead of assuming its
-  // shoulder follows PsychoV's analytic compression curve.
-  float compression_power = Psycho23AutoCompressionFromCenteredReferenceRange(
-      anchor_yf,
-      peak_yf);
-  float anchor_over_peak = saturate(renodx::math::DivideSafe(anchor_yf, peak_yf, 1.f));
-  float output_over_peak = max(renodx::math::DivideSafe(output_yf, peak_yf, 0.f), 0.f);
-  float anchor_powered = pow(max(anchor_over_peak, 1e-6f), compression_power);
-  float white_progress = saturate(renodx::math::DivideSafe(
-      pow(output_over_peak, compression_power) - anchor_powered,
-      1.f - anchor_powered,
-      0.f));
+// Compresses the linear BT.709 scene into the LUT's SDR domain by one max-channel scale. The bridge
+// is split from its reconstruction because the pass between them needs both the LUT bindings and
+// the scale itself: 1/scale is the compressed headroom the alpha output reports.
+SceneBridge BridgeSceneToSdr(float3 pre_compressor, float3 light_shaft_term) {
+  pre_compressor = max(pre_compressor, 0.f);
 
-  float3 opponent_retained_lms = Psycho23ApplySignedOpponentRetention(
-      compressed_lms,
-      precompression_lms,
-      input_adaptive_state_lms,
-      peak_white_lms,
-      white_progress);
-  float3 hue_restored_lms = lerp(
-      compressed_lms,
-      opponent_retained_lms,
-      saturate(hue_restore));
-
-  float3 display_relative_weighted = Psycho23ToAdaptiveRelativeWeightedLMS(
-      hue_restored_lms,
-      input_adaptive_state_lms);
-
-  if (gamut_compression != 0.f) {
-    display_relative_weighted = Psycho23GamutCompressAdaptiveRelativeWeightedLMSBound(
-        display_relative_weighted,
-        input_adaptive_state_lms,
-        gamut_bound_rgb_to_lms_weighted_mat,
-        gamut_compression);
-  }
-
-  return renodx::color::macleod_boynton::UnweighLMS(
-      Psycho23FromAdaptiveRelativeWeightedLMS(
-          display_relative_weighted,
-          input_adaptive_state_lms));
+  SceneBridge bridge;
+  bridge.scale = renodx::tonemap::neutwo::ComputeMaxChannelScale(pre_compressor);
+  bridge.sdr = saturate(
+      1.f - saturate(1.f - light_shaft_term) * saturate(1.f - (pre_compressor * bridge.scale)));
+  return bridge;
 }
 
-// PsychoV-24 display mapping (opt-in "Vanilla+ (PsychoV-24)"): a perceptual observer-model curve
-// (LMS + MacLeod-Boynton). Idiom-A gamma: the scene stays LINEAR into the curve, the EOTF gamma is
-// folded OUT of the neutral peak target (inverse) and back ONTO the output (forward). Neutral
-// highlights approach the configured Peak Brightness asymptotically while mids darken; this path is
-// not a hard per-channel MaxCLL clamp for saturated colors. Saturation rides purity_scale; hue
-// restore and highlight bleach are internal to the curve, so the separate adaptive highlight
-// emulation is bypassed in this mode; gamut compresses to the BT.2020 hull. Consumes the same
-// reconstructed color as the other mappers.
-float3 ApplyRenoDXPsychoV(float3 color, bool apply_grade) {
-  float peak = ToneMapPeakRatio();
-  if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_2) {
-    peak = renodx::color::correct::GammaSafe(peak, true, 2.2f);
-  } else if (injectedData.gamma_correction == renodx::draw::GAMMA_CORRECTION_GAMMA_2_4) {
-    peak = renodx::color::correct::GammaSafe(peak, true, 2.4f);
+// Divides the bridge's own scale back out and display-maps the result exactly once, either by
+// FinalizeOutput's per-channel branch or by test24. Ratio reconstruction, not an analytic inverse:
+// an identity grade returns the input.
+float3 ApplyRenoDXSceneOutput(SceneBridge bridge, float3 graded_sdr) {
+  const float3 graded_hdr = renodx::math::DivideSafe(graded_sdr, bridge.scale.xxx, graded_sdr);
+
+  if (injectedData.tone_map_type == HZD_TONE_MAP_TYPE_PSYCHOV) {
+    return ApplyPsychoVOutput(graded_hdr);
   }
-  // Menu / FMV / loading is ungraded (apply_grade = false) -> neutral purity there.
-  const float purity = apply_grade ? injectedData.color_grade_saturation : 1.f;
-  color = renodx::tonemap::psychov::psychotm_test24(
-      color, peak,
-      1.f, 1.f, 1.f, 1.f,    // exposure / highlights / shadows / contrast (graded upstream)
-      purity,                // purity_scale = Saturation
-      1.f, 100.f, 1.f, 1.f,  // bleaching / clip / hue_restore / adaptation_contrast (defaults)
-      0,                     // white_curve_mode
-      1.f,                   // cone_response_exponent
-      0.18f.xxx, 0.18f.xxx,  // adaptive / background state (mid grey)
-      1.f,                   // gamut compression
-      1,                     // gamut compression bound = BT.2020 (HDR10)
-      1.f,                   // adaptive_normalization
-      0.f,                   // compression = auto (shoulder from display headroom)
-      1.f,                   // highlight_saturation (unused by test24)
-      0.f);                  // gamut_hue_restore off
-  return ApplyEotfEmulation(color);  // Idiom-A forward gamma (undoes the peak inverse)
+  return ApplyRenoDXStandardOutput(graded_hdr, true);
 }
 
-// Dedicated PsychoV-24 output. Its display mapper owns gamma and peak handling;
-// keep this separate from the fixed Standard output used by Vanilla+ and Customized.
-float3 ApplyRenoDXPsychoVOutput(float3 color, bool apply_grade) {
-  if (apply_grade) color = ApplyRenoDXGrade(color);
-  return EncodeRenoDXHDR10(ApplyRenoDXPsychoV(color, apply_grade));
+// Menus, loading screens and video reach the output encoder already display-mapped - by the game for
+// UI, by the intercepted FMV decode for video - so they take the clamp-only path. Video keeps its
+// authored color and skips the user grade.
+float3 ApplyEncodeOnlyOutput(float3 color) {
+  return ApplyRenoDXStandardOutput(color, false, injectedData.custom_video_active == 0.f);
 }
 
 // Faithful Decima OETF output. output_mode = int(oetf3.x):

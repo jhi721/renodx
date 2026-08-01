@@ -2,8 +2,8 @@
 
 // Decima scene-final output transform: composites scene + DOF + bloom + flare + light shafts +
 // grain + vignette, applies the local-luminance HDR compression, the 3D LUT, and the OETF.
-// Rebuilt 1:1 from the decompiled original; the only change is the non-Vanilla HDR10 branch on
-// output_mode 2.
+// Rebuilt 1:1 from the decompiled original; in the non-Vanilla HDR10 branch (output_mode 2) the
+// whole tail from the compression gate onward is replaced by the RenoDX bridge and display map.
 
 Texture2D<float4> SceneTexture : register(t0, space8);
 Texture2D<float4> CoCTexture : register(t1, space8);
@@ -57,23 +57,14 @@ struct PSInput {
 };
 
 struct PSOutput {
-  float4 color : SV_Target0;
-  float luma : SV_Target1;
+  float4 color : SV_Target0;  // rgb, alpha carries the native highlight weight
+  float luma : SV_Target1;    // read by the FXAA pass
 };
 
-// Exact vanilla LUT sample: preserve scale/bias, the coordinate-derived LOD, and
-// trilinear filtering for Vanilla+ regardless of stale user LUT settings.
+// Vanilla LUT sample: scale/bias, the coordinate-derived LOD, and trilinear filtering.
 float3 SampleVanillaHzdLut(float3 pre_lut_color) {
   const float3 coord = pre_lut_color * Rgb3dLookupScaleBias.x + Rgb3dLookupScaleBias.y;
   return Rgb3dLookupTexture.SampleLevel(Rgb3dLookupSampler, coord, coord.z).rgb;
-}
-
-// Alternative modes retain the existing opt-in tetrahedral interpolation.
-float3 SampleConfiguredHzdLut(float3 pre_lut_color) {
-  if (injectedData.custom_lut_tetrahedral == 1.f) {
-    return renodx::lut::SampleTetrahedral(Rgb3dLookupTexture, pre_lut_color, 0.f);
-  }
-  return SampleVanillaHzdLut(pre_lut_color);
 }
 
 float3 ApplyNativeHighlightExpansion(float3 color, float highlight_weight, float debug_mask) {
@@ -129,7 +120,6 @@ PSOutput main(PSInput input) {
   const float4 bloom_and_grain = BloomAndGrainWeightTexture.Sample(BloomAndGrainWeightSampler, post_uv);
   const float3 flare = FlareTexture.Sample(FlareSampler, post_uv).rgb;
   const float3 light_shaft = LightShaftTexture.Sample(LightShaftSampler, post_uv).rgb;
-  const float local_luminance = LocalLuminanceTexture.Sample(LocalLuminanceSampler, input.texcoord).x;
 
   const float dof_weight = saturate(abs(coc) * 10.f);
   const float near_weight = 1.f - near_dof.w;
@@ -162,128 +152,50 @@ PSOutput main(PSInput input) {
   const float vignette_weight = vignette_distance * vignette_distance * VignetteColor.w * injectedData.fx_vignette;
   color = color * (1.f - vignette_weight) + VignetteColor.rgb * vignette_weight;
 
-  const float source_luma = LumaDecima(color);
-
-  float3 compressed_color;
-  float source_luma_scaled;
-  if (HdrCompressionControl.x > 0.5f) {
-    const float exposure_scale = 1.f / (local_luminance + 1.f);
-    compressed_color = 1.f - exp2(min(color * exposure_scale, 20.f) * -1.4426950216293335f);
-    source_luma_scaled = exposure_scale * source_luma;
-  } else {
-    compressed_color = color;
-    source_luma_scaled = source_luma;
-  }
-
   const float3 light_shaft_term = LightShaftColor * LightShaftIntensity * light_shaft * injectedData.fx_light_shaft;
-  const float3 pre_lut_color = saturate(1.f - saturate(1.f - light_shaft_term) * saturate(1.f - compressed_color));
-
-  const bool vanilla_plus =
-      injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS;
-  const bool customized =
-      injectedData.tone_map_type == HZD_TONE_MAP_TYPE_CUSTOMIZED;
-  float3 lut_color = vanilla_plus
-                         ? SampleVanillaHzdLut(pre_lut_color)
-                         : SampleConfiguredHzdLut(pre_lut_color);
-  const float compressed_luma = LumaDecima(compressed_color);
-  const float highlight_weight = saturate((LumaDecima(lut_color) * 8.f) - 4.f)
-                                 * saturate((max(source_luma_scaled / (compressed_luma + 9.999999960041972e-13f), 0.f) - 1.f) * 0.03999999910593033f);
-
-  lut_color = saturate(lut_color);
-  if (!vanilla_plus) {
-    lut_color = lerp(
-        pre_lut_color,
-        lut_color,
-        saturate(injectedData.color_grade_lut_strength));
-  }
-
-  float debug_mask;
-  lut_color = ApplyDebugRamp(lut_color, input.texcoord, debug_mask);
 
   const int output_mode = int(OETFSettings3.x);
+  float highlight_weight;
   float3 output_color;
 
-  if (output_mode == 2 && vanilla_plus) {
-    if (HdrOutputControl.y >= 0.f) {
-      lut_color = ApplyCalibratedNativeExpansion(
-          lut_color,
-          LumaDecima(lut_color),
-          highlight_weight,
-          debug_mask);
-    }
-    output_color = ApplyRenoDXStandardOutput(lut_color, true);
-  } else if (output_mode == 2 && injectedData.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA) {
-    // Hue-preserving LUT bridge: same compression curve as the active vanilla gate, but computed
-    // on the brightest channel and applied as a uniform RGB scale, so the LUT coordinate keeps
-    // the source hue instead of collapsing saturated highlights toward white. In-gamut pixels
-    // get s = 1 (no change). The scale only shapes the LUT coordinate: in the luminance match
-    // below it cancels algebraically (Luminance(lut/s, Y(lut)/s, t) == lut * t/Y(lut)), so no
-    // explicit un-divide is needed.
-    const float max_channel = renodx::math::Max(color);
-    float bridge_scale;
+  if (output_mode == 2 && injectedData.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA) {
+    // renodx
+    const SceneBridge bridge = BridgeSceneToSdr(color, light_shaft_term);
+    float3 lut_color = saturate(
+        SampleHzdLut(Rgb3dLookupTexture, Rgb3dLookupSampler, bridge.sdr,
+                     Rgb3dLookupScaleBias.x, Rgb3dLookupScaleBias.y));
+    // 1/scale is the headroom the bridge compressed away - the same quantity the vanilla block
+    // measures as source luma over compressed luma.
+    highlight_weight = saturate((LumaDecima(lut_color) * 8.f) - 4.f)
+                       * saturate((max(renodx::math::DivideSafe(1.f, bridge.scale, 0.f), 0.f) - 1.f)
+                                  * 0.03999999910593033f);
+    lut_color = lerp(bridge.sdr, lut_color, saturate(injectedData.color_grade_lut_strength));
+    output_color = ApplyRenoDXSceneOutput(bridge, lut_color);
+  } else {
+    // vanilla
+    const float source_luma = LumaDecima(color);
+    const float local_luminance = LocalLuminanceTexture.Sample(LocalLuminanceSampler, input.texcoord).x;
+
+    float3 compressed_color;
+    float source_luma_scaled;
     if (HdrCompressionControl.x > 0.5f) {
       const float exposure_scale = 1.f / (local_luminance + 1.f);
-      bridge_scale = max_channel > 0.f
-                         ? (1.f - exp2(min(max_channel * exposure_scale, 20.f) * -1.4426950216293335f)) / max_channel
-                         : 1.f;
+      compressed_color = 1.f - exp2(min(color * exposure_scale, 20.f) * -1.4426950216293335f);
+      source_luma_scaled = exposure_scale * source_luma;
     } else {
-      bridge_scale = max_channel > 1.f ? 1.f / max_channel : 1.f;
-    }
-    const float3 bridged = color * bridge_scale;
-    const float3 bridge_pre_lut = saturate(1.f - saturate(1.f - light_shaft_term) * saturate(1.f - bridged));
-    float3 bridge_lut = saturate(SampleConfiguredHzdLut(bridge_pre_lut));
-    bridge_lut = lerp(bridge_pre_lut, bridge_lut, saturate(injectedData.color_grade_lut_strength));
-    bridge_lut = ApplyDebugRamp(bridge_lut, input.texcoord, debug_mask);
-    float luma_target;
-    if (customized) {
-      // Customized keeps the vanilla LUT brightness, but calibrates the active native
-      // expansion to Peak/Game in the same inverse-gamma domain as Vanilla+.
-      const NativeExpansionLuma expansion =
-          EvaluateNativeExpansionLuma(LumaDecima(lut_color), highlight_weight);
-      luma_target = HdrOutputControl.y >= 0.f
-                        ? lerp(expansion.source, expansion.mapped, debug_mask)
-                        : LumaDecima(lut_color);
-    } else {
-      // Preserve the existing PsychoV-24 input exactly until that mapper gets its own plan.
-      const float3 vanilla_expanded = HdrOutputControl.y >= 0.f
-                                          ? ApplyNativeHighlightExpansion(lut_color, highlight_weight, debug_mask)
-                                          : lut_color;
-      luma_target = LumaDecima(vanilla_expanded);
+      compressed_color = color;
+      source_luma_scaled = source_luma;
     }
 
-    float3 hue_matched = renodx::color::correct::Luminance(
-        bridge_lut,
-        LumaDecima(bridge_lut),
-        luma_target);
-    if (customized) {
-      // PsychoV23 signed-opponent retention restores adaptive highlight hue between the
-      // unbounded bridge and its calibrated luminance target, then compresses to BT.2020.
-      const float3 anchor_lms = renodx::color::lms::from::BT709(0.18f.xxx);
-      hue_matched = renodx::color::bt709::from::LMS(
-          ApplyPsycho23SignedOpponentRetentionAndGamutCompressionLMS(
-              renodx::color::lms::from::BT709(
-                  renodx::math::DivideSafe(
-                      bridge_lut,
-                      bridge_scale.xxx,
-                      bridge_lut)),
-              renodx::color::lms::from::BT709(hue_matched),
-              anchor_lms,
-              anchor_lms,
-              renodx::color::lms::from::BT709(NativeExpansionCap().xxx),
-              renodx::color::macleod_boynton::BT2020_TO_LMS_WEIGHTED_MAT,
-              1.f,
-              1.f));
-      // PsychoV23 retains MacLeod-Boynton Yf while changing chromaticity. Restore
-      // the authoritative Decima luminance with a uniform RGB scale.
-      hue_matched = renodx::color::correct::Luminance(
-          hue_matched,
-          LumaDecima(hue_matched),
-          luma_target);
-      output_color = ApplyRenoDXStandardOutput(hue_matched, true);
-    } else {
-      output_color = ApplyRenoDXPsychoVOutput(hue_matched, true);
-    }
-  } else {
+    const float3 pre_lut_color = saturate(1.f - saturate(1.f - light_shaft_term) * saturate(1.f - compressed_color));
+    float3 lut_color = SampleVanillaHzdLut(pre_lut_color);
+    const float compressed_luma = LumaDecima(compressed_color);
+    highlight_weight = saturate((LumaDecima(lut_color) * 8.f) - 4.f)
+                       * saturate((max(source_luma_scaled / (compressed_luma + 9.999999960041972e-13f), 0.f) - 1.f) * 0.03999999910593033f);
+
+    float debug_mask;
+    lut_color = ApplyDebugRamp(saturate(lut_color), input.texcoord, debug_mask);
+
     if (HdrOutputControl.y >= 0.f) {
       lut_color = ApplyVanillaHDRCompression(lut_color, highlight_weight, debug_mask);
     }

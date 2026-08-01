@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-namespace renodx {
+namespace renodx_custom {
 namespace tonemap {
 namespace psychov {
 
@@ -386,9 +386,6 @@ float3 psycho24_ApplyManualHueDirection(
           current_adaptive_state_lms));
 }
 
-// Test24 keeps Test23 grading, adaptive-MB purity, contrast, compression,
-// CopySign, and gamut/output stages. Its only model change is replacing the
-// pre-gamut OKLab hue operation with the authored adaptive-MB interpolation.
 float3 psychotm_test24(float3 bt709_linear_input, float peak_value = 1000.f / 203.f,
                        float exposure = 1.f,
                        float highlights = 1.f,
@@ -549,6 +546,6 @@ float3 psychotm_test24(float3 bt709_linear_input, float peak_value = 1000.f / 20
 
 }  // namespace psychov
 }  // namespace tonemap
-}  // namespace renodx
+}  // namespace renodx_custom
 
 #endif  // RENODX_SHADERS_TONEMAP_PSYCHOV_TEST24_HLSL_

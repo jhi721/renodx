@@ -4,9 +4,9 @@
 // The vanilla SDR branch decodes with proper piecewise sRGB, but the vanilla HDR branch
 // (cHDROutputControl.x > 0) decodes with a plain 2.2 power before the native highlight expansion,
 // crushing video shadows relative to the SDR reference. In non-Vanilla modes the HDR branch decodes
-// with the same piecewise sRGB as SDR. Vanilla+ and Customized also calibrate the native expansion
-// to Peak/Game; PsychoV-24 retains its existing x20 behavior. Output stays linear and feeds the
-// intercepted output pass 0x29103068. This pass uses Rec.709 luma, not the scene's Decima weights.
+// with the same piecewise sRGB as SDR and calibrates the native expansion to Peak / Game Brightness.
+// Output stays linear and feeds the intercepted output pass 0x29103068. This pass uses Rec.709 luma,
+// not the scene's Decima weights.
 
 Texture2D<float4> YPlane : register(t16);
 Texture2D<float4> CbPlane : register(t17);
@@ -50,22 +50,16 @@ float4 main(PSInput input) : SV_Target {
 
   float3 output_color;
   if (UniformParams[0].cHDROutputControl.x > 0.f) {
-    float3 decoded;
     if (injectedData.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA) {
       // sRGB-correct video decode, matching the vanilla SDR branch.
-      decoded = DecodeSRGBPiecewise(rgb);
-    } else {
-      decoded = pow(abs(rgb), 2.200000f);
-    }
-
-    if (injectedData.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS
-        || injectedData.tone_map_type == HZD_TONE_MAP_TYPE_CUSTOMIZED) {
+      const float3 decoded = DecodeSRGBPiecewise(rgb);
       output_color = ApplyCalibratedNativeExpansion(
           decoded,
           dot(decoded, float3(0.212600f, 0.715200f, 0.072200f)),
           weight,
           1.f);
     } else {
+      const float3 decoded = pow(abs(rgb), 2.200000f);
       // Native highlight expansion, bit-exact to the original (Rec.709 luma, x20 final scale).
       const float expansion_luma = min(dot(decoded, float3(0.212600f, 0.715200f, 0.072200f)), 1.f);
       const float shoulder = (log2(1.f - (expansion_luma * 0.981684327f)) * -0.693147182f) / (expansion_luma + 0.000010f);
