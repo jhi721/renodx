@@ -89,7 +89,7 @@ namespace {
           .label = "Tone Mapper",
           .section = "Tone Mapping",
           .tooltip = "Sets the tone mapper type",
-          .labels = {"Vanilla", "Vanilla+", "PsychoV"},
+          .labels = {"Vanilla", "Vanilla+", "PsychoV-24"},
       },
       new renodx::utils::settings::Setting{
           .key = "ToneMapPeakNits",
