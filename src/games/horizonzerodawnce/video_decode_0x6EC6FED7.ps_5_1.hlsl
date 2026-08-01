@@ -1,12 +1,10 @@
 #include "./common.hlsl"
 
-// Decima FMV decode: 4-plane YCbCr -> RGB with an EOTF decode that differs by output mode.
-// The vanilla SDR branch decodes with proper piecewise sRGB, but the vanilla HDR branch
-// (cHDROutputControl.x > 0) decodes with a plain 2.2 power before the native highlight expansion,
-// crushing video shadows relative to the SDR reference. In non-Vanilla modes the HDR branch decodes
-// with the same piecewise sRGB as SDR and calibrates the native expansion to Peak / Game Brightness.
-// Output stays linear and feeds the intercepted output pass 0x29103068. This pass uses Rec.709 luma,
-// not the scene's Decima weights.
+// Decima FMV decode: 4-plane YCbCr -> RGB with an EOTF decode that differs by output mode. The
+// vanilla HDR branch (cHDROutputControl.x > 0) decodes with a plain 2.2 power; in non-Vanilla modes
+// it decodes with the same piecewise sRGB as the SDR branch and calibrates the native expansion to
+// Peak / Game Brightness. Output stays linear and feeds the output pass 0x29103068. Luma here is
+// Rec.709-weighted, not the scene's Decima set.
 
 Texture2D<float4> YPlane : register(t16);
 Texture2D<float4> CbPlane : register(t17);
@@ -21,10 +19,7 @@ struct InUniformParams {
 
 ConstantBuffer<InUniformParams> UniformParams[] : register(b4);
 
-// NOTE: near-duplicate of renodx::color::srgb::Decode, kept LOCAL on purpose: the vanilla
-// SDR branch below must stay bit-exact to the game's decompiled DXBC, and the library body
-// compiles to different bytecode (strict `<` at the breakpoint + different instruction
-// ordering — verified by a .cso hash A/B). Non-Vanilla HDR reuses it for SDR-parity.
+// The game's exact piecewise sRGB decode, bit-exact to its decompiled DXBC.
 float3 DecodeSRGBPiecewise(float3 color) {
   return float3(
       color.r < 0.040449999f ? color.r * 0.0773993805f : pow((color.r * 0.947867274f) + 0.0521326996f, 2.400000f),
@@ -51,7 +46,7 @@ float4 main(PSInput input) : SV_Target {
   float3 output_color;
   if (UniformParams[0].cHDROutputControl.x > 0.f) {
     if (injectedData.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA) {
-      // sRGB-correct video decode, matching the vanilla SDR branch.
+      // renodx: decodes like the vanilla SDR branch.
       const float3 decoded = DecodeSRGBPiecewise(rgb);
       output_color = ApplyCalibratedNativeExpansion(
           decoded,

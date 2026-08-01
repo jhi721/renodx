@@ -15,8 +15,7 @@ float LumaDecima(float3 color) {
   return dot(color, DECIMA_LUMA);
 }
 
-// Local encoders duplicate renodx::color::{srgb,pq} on purpose: they carry the game's exact Decima
-// literals for the bit-exact ApplyVanillaOutput path, which still runs in SDR output mode.
+// The game's exact Decima literals, used by ApplyVanillaOutput on the SDR path.
 float EncodeSRGBChannel(float color) {
   return color < 0.003100000089034438f
              ? color * 12.920000076293945f
@@ -84,8 +83,7 @@ float3 ApplyExposureContrastFlareHighlightsShadowsByLuminance(float3 untonemappe
   return color;
 }
 
-// Saturation / Dechroma / Highlight Saturation. Hue correction is not part of this add-on's grade;
-// highlight hue and blow-out are emulated after the display map instead.
+// Saturation / Dechroma / Highlight Saturation.
 float3 ApplySaturationBlowoutHighlightSaturation(float3 tonemapped, float y, renodx::color::grade::Config config) {
   float3 color = tonemapped;
   if (config.saturation != 1.f || config.dechroma != 0.f || config.blowout != 0.f) {
@@ -134,8 +132,7 @@ float3 ApplyRenoDXGrade(float3 color) {
   return ApplySaturationBlowoutHighlightSaturation(color, y, cg);
 }
 
-// The exponent behind each Gamma Correction setting. Read by both the EOTF emulation and
-// InternalPeakRatio, so a new mode needs an entry here and nowhere else.
+// The exponent behind each Gamma Correction setting.
 float GammaCorrectionExponent() {
   if (injectedData.gamma_correction == HZD_GAMMA_CORRECTION_2_2) return 2.2f;
   if (injectedData.gamma_correction == HZD_GAMMA_CORRECTION_BT1886) return 2.4f;
@@ -150,16 +147,13 @@ float3 ApplyEotfEmulation(float3 color) {
   return renodx::color::correct::GammaSafe(color, false, gamma);
 }
 
-// Display headroom over Game Brightness, and the output ceiling. Not floored at 1: a peak below
-// Game Brightness has to keep clamping to the peak, or the encode sends more nits than the display
-// can show.
+// Display headroom over Game Brightness, and the output ceiling.
 float PeakRatio() {
   return injectedData.peak_white_nits / max(injectedData.diffuse_white_nits, 1.f);
 }
 
-// PeakRatio inverted through the gamma emulation. The native FMV expansion and PsychoV cap on this
-// one rather than on PeakRatio, so that running the forward gamma on their output lands highlights
-// back exactly on PeakRatio instead of past it.
+// PeakRatio in the pre-gamma domain. The native FMV expansion and PsychoV cap on this one, and the
+// forward gamma on their output lands highlights back on PeakRatio.
 float InternalPeakRatio() {
   const float gamma = GammaCorrectionExponent();
   if (gamma == 0.f) return PeakRatio();
@@ -228,9 +222,7 @@ float3 ApplyRenoDXStandardOutput(float3 color, bool apply_display_map = false, b
 }
 
 // PsychoV replaces both the user grade and the display map: test24 applies exposure, highlights,
-// shadows, contrast and purity itself, then compresses to peak in cone space. Peak is the internal
-// one because the gamma emulation is inverted into it - running the forward gamma on the output is
-// what lands highlights back on peak_ratio.
+// shadows, contrast and purity itself, then compresses to peak in cone space.
 float3 ApplyPsychoVOutput(float3 color) {
   color = renodx_custom::tonemap::psychov::psychotm_test24(
       color, InternalPeakRatio(),
@@ -308,8 +300,8 @@ float3 ApplyCalibratedNativeExpansion(
   return color * (mapped / expansion.source);
 }
 
-// Samples the game's grade LUT. The domain is the compressor's own output, not gamma 2, so the
-// coordinate is scaled and biased with no encode - and the vanilla LOD comes from the blue axis.
+// Samples the game's grade LUT. Its domain is the compressor's own output, so the coordinate is
+// scaled and biased with no encode, and the vanilla LOD comes from the blue axis.
 float3 SampleHzdLut(Texture3D<float4> lut, SamplerState samp,
                     float3 sdr_color, float lut_scale, float lut_bias) {
   const float3 coord = sdr_color * lut_scale + lut_bias;
@@ -324,9 +316,7 @@ struct SceneBridge {
   float scale;  // The max-channel scale that produced it; 1/scale is the compressed headroom
 };
 
-// Compresses the linear BT.709 scene into the LUT's SDR domain by one max-channel scale. The bridge
-// is split from its reconstruction because the pass between them needs both the LUT bindings and
-// the scale itself: 1/scale is the compressed headroom the alpha output reports.
+// Compresses the linear BT.709 scene into the LUT's SDR domain by one max-channel scale.
 SceneBridge BridgeSceneToSdr(float3 pre_compressor, float3 light_shaft_term) {
   pre_compressor = max(pre_compressor, 0.f);
 
@@ -338,8 +328,7 @@ SceneBridge BridgeSceneToSdr(float3 pre_compressor, float3 light_shaft_term) {
 }
 
 // Divides the bridge's own scale back out and display-maps the result exactly once, either by
-// FinalizeOutput's per-channel branch or by test24. Ratio reconstruction, not an analytic inverse:
-// an identity grade returns the input.
+// FinalizeOutput's per-channel branch or by test24. An identity grade returns the input unchanged.
 float3 ApplyRenoDXSceneOutput(SceneBridge bridge, float3 graded_sdr) {
   const float3 graded_hdr = renodx::math::DivideSafe(graded_sdr, bridge.scale.xxx, graded_sdr);
 
