@@ -1,9 +1,9 @@
 #include "./common.hlsl"
 
 // Decima scene-final output transform: composites scene + DOF + bloom + flare + light shafts +
-// grain + vignette, applies the local-luminance HDR compression, the 3D LUT, and the OETF.
-// Rebuilt 1:1 from the decompiled original; in the non-Vanilla HDR10 branch (output_mode 2) the
-// whole tail from the compression gate onward is replaced by the RenoDX bridge and display map.
+// grain + vignette, applies the local-luminance HDR compression, the 3D LUT, and the OETF. In the
+// non-Vanilla HDR10 branch (output_mode 2) the whole tail from the compression gate onward is the
+// RenoDX bridge and display map instead.
 
 Texture2D<float4> SceneTexture : register(t0, space8);
 Texture2D<float4> CoCTexture : register(t1, space8);

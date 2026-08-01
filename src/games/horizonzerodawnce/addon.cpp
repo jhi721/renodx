@@ -367,9 +367,6 @@ namespace {
 
   void OnInitSwapchain(reshade::api::swapchain* swapchain, bool resize) {
     if (fired_on_init_swapchain) return;
-    // Latch only on a successful read: the transient boot swapchain may have no HDR
-    // metadata, and we must not pin the default to 1000 and block re-seeding from the
-    // real HDR swapchain.
     auto peak = renodx::utils::swapchain::GetPeakNits(swapchain);
     if (!peak.has_value()) return;
     auto* peak_setting = renodx::utils::settings::FindSetting("ToneMapPeakNits");
@@ -399,9 +396,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
     case DLL_PROCESS_ATTACH:
       if (!reshade::register_addon(h_module)) return FALSE;
 
-      // Decima compiles its PSO catalog on a large worker-thread pool; synchronous replacement can
-      // race the first use of a replacement pipeline. Defer replacement to a safe point.
-      renodx::utils::shader::use_replace_async = true;
+      renodx::utils::shader::use_replace_async = true;  // Decima builds its PSOs on worker threads.
 
       renodx::mods::shader::force_pipeline_cloning = true;
       renodx::mods::shader::expected_constant_buffer_index = 0;
