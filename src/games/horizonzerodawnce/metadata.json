@@ -3,7 +3,7 @@
   "id": "horizonzerodawnce",
   "title": "Horizon Zero Dawn Complete Edition",
   "maintainers": ["DristoforColumb"],
-  "status": "beta",
+  "status": "stable",
   "deploy": {
     "steam_appid": 1151640
   }

@@ -5,18 +5,18 @@
   "maintainers": [
     "DristoforColumb"
   ],
-  "status": "experimental",
+  "status": "stable",
   "games": [
     {
       "title": "Horizon Zero Dawn Remastered",
-      "status": "experimental",
+      "status": "stable",
       "deploy": {
         "steam_appid": 2561580
       }
     },
     {
       "title": "Horizon Forbidden West Complete Edition",
-      "status": "experimental",
+      "status": "stable",
       "deploy": {
         "steam_appid": 2420110
       }
