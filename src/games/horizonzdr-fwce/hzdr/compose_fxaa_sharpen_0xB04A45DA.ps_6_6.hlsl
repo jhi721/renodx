@@ -1,7 +1,5 @@
-// Scene compose pass — FXAA + sharpen (extra block gated Constant_204 & 4) variant.
-// Decompiled from the game's DXIL. Flow: AA/edge blend -> exposure -> grade ->
-// (flag&1 grain) -> (flag&2 rational compressor) -> gamma2 3D LUT -> (flag&4 highlight
-// re-expansion + peak clamp) -> encode switch Constant_176.w (1=sRGB, 2=BT.2020+PQ).
+// Scene compose pass — FXAA + sharpen variant. Same flow as compose_noaa_0xDC3776F8, with
+// FXAA 3.11 in place of its edge blend plus a sharpen block gated on Constant_204 & 4.
 
 #include "../common.hlsli"
 
@@ -877,18 +875,14 @@ OutputSignature main(
     if (_881) {
 #if 1
       // renodx
-      float3 vanilla_plus = ApplyRenoDXSceneOutput(
+      float3 renodx_output = ApplyRenoDXSceneOutput(
           float3(_662, _663, _664),
-          float3(_749, _750, _751),
-          _748,
-          !_667,
-          !_753,
           t1_space5, s1_space3,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_072.x,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_072.y);
-      _935 = vanilla_plus.r;
-      _936 = vanilla_plus.g;
-      _937 = vanilla_plus.b;
+      _935 = renodx_output.r;
+      _936 = renodx_output.g;
+      _937 = renodx_output.b;
 #else
       // vanilla
       float _883 = _828 * 0.6274039149284363f;

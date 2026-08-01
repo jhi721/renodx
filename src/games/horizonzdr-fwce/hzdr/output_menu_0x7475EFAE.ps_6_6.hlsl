@@ -1,7 +1,6 @@
-// Menu / FMV / loading output pass (single-input OETF).
-// Decompiled from the game's DXIL. Mode switch InUniform_Constant_000.w:
-// 1 = gamma pow + piecewise sRGB (SDR), 2 = BT.709->BT.2020 * paper-white scale ->
-// gamma pow (folded, .x) -> ST.2084 PQ (HDR10), else passthrough.
+// Menu / FMV / loading output encoder (single input, OETF only). Mode switch
+// InUniform_Constant_000.w: 1 = SDR sRGB, 2 = BT.2020 + PQ, anything else passthrough.
+// Mode 2 is the shared RenoDX encode. The HFW twin is hfw/output_menu_0x55477A4D.
 
 #include "../common.hlsli"
 
@@ -91,10 +90,10 @@ float4 main(
     if (_67) {
 #if 1
       // renodx
-      float3 vanilla_plus = ApplyVanillaPlusMenu(float3(_13.x, _13.y, _13.z));
-      _121 = vanilla_plus.r;
-      _122 = vanilla_plus.g;
-      _123 = vanilla_plus.b;
+      float3 renodx_output = ApplyEncodeOnlyOutput(float3(_13.x, _13.y, _13.z));
+      _121 = renodx_output.r;
+      _122 = renodx_output.g;
+      _123 = renodx_output.b;
 #else
       // vanilla
       float _69 = _13.x * 0.6274039149284363f;

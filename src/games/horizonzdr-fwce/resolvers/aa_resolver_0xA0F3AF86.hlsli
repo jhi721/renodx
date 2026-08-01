@@ -2,10 +2,8 @@
 #define SRC_GAMES_HORIZONZDR_FWCE_RESOLVERS_AA_RESOLVER_0XA0F3AF86_HLSLI_
 
 // AA/upscale resolver over the encoded frame: decode -> temporal resolve -> encode.
-// Decompiled from the game's DXIL. Vanilla+ replaces the game's output-space HDR cap
-// with the RenoDX PQ cap in GetResolverOutputParams and can replace resolver CAS with
-// Lilium RCAS using the same taps. The RenoDX cap follows Peak Brightness while
-// bounding sharpening overshoot.
+// Decompiled from the game's DXIL. The RenoDX edits are GetResolverOutputParams and the
+// optional RCAS in SelectResolverSharpening; both are documented where they are defined.
 //
 // Shared by HZDR 0xA0F3AF86 and HFW 0x6127499F: both games ship this program with the same
 // instructions and the same constants, differing only in how the sampler is bound.
@@ -28,6 +26,9 @@ void main(
 ) {
   const float4 resolver_output_params = GetResolverOutputParams(
       Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.AAResolverUpscaleParams_Constant_080);
+  // Dispatch-uniform RCAS normalization, hoisted once for the four resolver branches below.
+  const float resolver_normalization_point =
+      GetResolverNormalizationPoint(resolver_output_params);
 #ifdef HORIZON_RESOLVER_SAMPLER_HEAP_INDEX
   // HFW binds no classic sampler here - SM6.6 sampler heap, index from the wrapper.
   SamplerState s0_space5 = SamplerDescriptorHeap[HORIZON_RESOLVER_SAMPLER_HEAP_INDEX];
@@ -171,7 +172,7 @@ void main(
   half _177 = _159 * _176;
   const float3 resolver_color_0 = SelectResolverSharpening(
       float3(_165, _171, _177), _46.rgb, _60.rgb, _67.rgb, _78.rgb, _89.rgb,
-      resolver_output_params);
+      resolver_output_params, resolver_normalization_point);
   half _178 = half(resolver_output_params.z);
   half _179 = min(half(resolver_color_0.x), _178);
   half _180 = min(half(resolver_color_0.y), _178);
@@ -743,7 +744,7 @@ void main(
   half _661 = _643 * _660;
   const float3 resolver_color_1 = SelectResolverSharpening(
       float3(_649, _655, _661), _540.rgb, _551.rgb, _558.rgb, _569.rgb, _576.rgb,
-      resolver_output_params);
+      resolver_output_params, resolver_normalization_point);
   half _662 = min(half(resolver_color_1.x), _178);
   half _663 = min(half(resolver_color_1.y), _178);
   half _664 = min(half(resolver_color_1.z), _178);
@@ -1247,7 +1248,7 @@ void main(
   half _1141 = _1123 * _1140;
   const float3 resolver_color_2 = SelectResolverSharpening(
       float3(_1129, _1135, _1141), _1021.rgb, _1031.rgb, _1038.rgb, _1045.rgb, _1056.rgb,
-      resolver_output_params);
+      resolver_output_params, resolver_normalization_point);
   half _1142 = min(half(resolver_color_2.x), _178);
   half _1143 = min(half(resolver_color_2.y), _178);
   half _1144 = min(half(resolver_color_2.z), _178);
@@ -1738,7 +1739,7 @@ void main(
   half _1608 = _1590 * _1607;
   const float3 resolver_color_3 = SelectResolverSharpening(
       float3(_1596, _1602, _1608), _1495.rgb, _1502.rgb, _1509.rgb, _1516.rgb, _1523.rgb,
-      resolver_output_params);
+      resolver_output_params, resolver_normalization_point);
   half _1609 = min(half(resolver_color_3.x), _178);
   half _1610 = min(half(resolver_color_3.y), _178);
   half _1611 = min(half(resolver_color_3.z), _178);
