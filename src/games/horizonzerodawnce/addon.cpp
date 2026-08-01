@@ -22,27 +22,32 @@
 namespace {
 
   ShaderInjectData shader_injection;
+  float current_settings_mode = 0.f;
 
-  bool ShouldReplaceShader(reshade::api::command_list* cmd_list) {
-    (void)cmd_list;
-    return shader_injection.tone_map_type != 0.f;  // Vanilla = no shader replacement
+  bool IsModEnabled() {
+    return shader_injection.tone_map_type != HZD_TONE_MAP_TYPE_VANILLA;
   }
 
-  // FMV decode draw = a video is on screen this frame. The shared menu/FMV/loading output pass uses
-  // this flag to skip highlight emulation for cinematics while keeping it for menus/loading.
-  // Reset in OnPresent.
+  bool IsVanillaPlus() {
+    return shader_injection.tone_map_type == HZD_TONE_MAP_TYPE_VANILLA_PLUS;
+  }
+
+  bool IsAdvancedMode() { return current_settings_mode >= 1.f; }
+
+  bool ShouldReplaceShader(reshade::api::command_list*) {
+    return IsModEnabled();  // Vanilla uses the game's original shaders.
+  }
+
   bool OnVideoDecode(reshade::api::command_list* cmd_list) {
     shader_injection.custom_video_active = 1.f;
     return ShouldReplaceShader(cmd_list);
   }
 
   renodx::mods::shader::CustomShaders custom_shaders = {
-      CustomShaderEntryCallback(0xB444C8F0, &ShouldReplaceShader),  // Scene composite + grade + LUT + OETF
-      CustomShaderEntryCallback(0x29103068, &ShouldReplaceShader),  // Menu / FMV / loading output transform
-      CustomShaderEntryCallback(0x6EC6FED7, &OnVideoDecode),        // FMV YCbCr decode fix + video-active flag
+      CustomShaderEntryCallback(0xB444C8F0, &ShouldReplaceShader),  // Scene compose, bridge + display map + PQ
+      CustomShaderEntryCallback(0x29103068, &ShouldReplaceShader),  // Menu / FMV / loading output
+      CustomShaderEntryCallback(0x6EC6FED7, &OnVideoDecode),        // FMV decode and expansion
   };
-
-  float current_settings_mode = 0;
 
   renodx::utils::settings::Settings settings = {
       new renodx::utils::settings::Setting{
@@ -60,47 +65,67 @@ namespace {
           .key = "ToneMapType",
           .binding = &shader_injection.tone_map_type,
           .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-          .default_value = 1.f,
+          .default_value = HZD_TONE_MAP_TYPE_VANILLA_PLUS,
           .label = "Tone Mapper",
           .section = "Tone Mapping",
           .tooltip = "Sets the tone mapper type",
-          .labels = {"Vanilla", "Vanilla+", "Vanilla+ (Customized)", "Vanilla+ (PsychoV-24)"},
+          .labels = {"Vanilla", "Vanilla+", "PsychoV"},
       },
       new renodx::utils::settings::Setting{
           .key = "ToneMapPeakNits",
           .binding = &shader_injection.peak_white_nits,
           .default_value = 1000.f,
-          .can_reset = true,
           .label = "Peak Brightness",
           .section = "Tone Mapping",
           .tooltip = "Sets the value of peak white in nits",
           .min = 100.f,
           .max = 4000.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
       },
       new renodx::utils::settings::Setting{
           .key = "ToneMapGameNits",
           .binding = &shader_injection.diffuse_white_nits,
           .default_value = 203.f,
-          .can_reset = true,
           .label = "Game Brightness",
           .section = "Tone Mapping",
           .tooltip = "Sets the value of 100% white in nits",
           .min = 48.f,
           .max = 500.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
       },
       new renodx::utils::settings::Setting{
           .key = "GammaCorrection",
           .binding = &shader_injection.gamma_correction,
           .value_type = renodx::utils::settings::SettingValueType::INTEGER,
-          .default_value = 1.f,
+          .default_value = HZD_GAMMA_CORRECTION_2_2,
           .label = "Gamma Correction",
           .section = "Tone Mapping",
           .tooltip = "Emulates a display EOTF.",
           .labels = {"Off", "2.2", "BT.1886"},
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_enabled = IsModEnabled,
+          .is_visible = IsAdvancedMode,
+      },
+      new renodx::utils::settings::Setting{
+          .key = "ToneMapBlowout",
+          .binding = &shader_injection.tone_map_blowout,
+          .default_value = 100.f,
+          .label = "Blowout",
+          .section = "Tone Mapping",
+          .tooltip = "Emulates blowout from per channel tonemapping",
+          .max = 100.f,
+          .is_enabled = IsVanillaPlus,
+          .parse = [](float value) { return value * 0.01f; },
+      },
+      new renodx::utils::settings::Setting{
+          .key = "ToneMapHueShift",
+          .binding = &shader_injection.tone_map_hue_shift,
+          .default_value = 100.f,
+          .label = "Hue Shift",
+          .section = "Tone Mapping",
+          .tooltip = "Hue-shift emulation strength.",
+          .max = 100.f,
+          .is_enabled = IsVanillaPlus,
+          .parse = [](float value) { return value * 0.01f; },
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeExposure",
@@ -111,8 +136,8 @@ namespace {
           .min = 0.f,
           .max = 2.f,
           .format = "%.2f",
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_enabled = IsModEnabled,
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeHighlights",
@@ -121,9 +146,9 @@ namespace {
           .label = "Highlights",
           .section = "Color Grading",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.02f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeShadows",
@@ -132,9 +157,9 @@ namespace {
           .label = "Shadows",
           .section = "Color Grading",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.02f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeContrast",
@@ -143,9 +168,9 @@ namespace {
           .label = "Contrast",
           .section = "Color Grading",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.02f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeSaturation",
@@ -154,9 +179,9 @@ namespace {
           .label = "Saturation",
           .section = "Color Grading",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.02f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeHighlightSaturation",
@@ -166,9 +191,9 @@ namespace {
           .section = "Color Grading",
           .tooltip = "Adds or removes highlight color.",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.02f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeDechroma",
@@ -178,9 +203,9 @@ namespace {
           .section = "Color Grading",
           .tooltip = "Controls highlight desaturation due to overexposure.",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.01f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeFlare",
@@ -190,9 +215,9 @@ namespace {
           .section = "Color Grading",
           .tooltip = "Flare/Glare Compensation",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.02f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeLUTStrength",
@@ -201,9 +226,9 @@ namespace {
           .label = "LUT Strength",
           .section = "Color Grading",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 2.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.01f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "ColorGradeLUTSampling",
@@ -213,8 +238,8 @@ namespace {
           .label = "LUT Sampling",
           .section = "Color Grading",
           .labels = {"Trilinear", "Tetrahedral"},
-          .is_enabled = []() { return shader_injection.tone_map_type >= 2.f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_enabled = IsModEnabled,
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "FxBloom",
@@ -224,9 +249,9 @@ namespace {
           .section = "Effects",
           .tooltip = "Scales the game's bloom. 100 = vanilla, 0 = off.",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.01f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "FxLightShaft",
@@ -236,9 +261,9 @@ namespace {
           .section = "Effects",
           .tooltip = "Scales the game's light shafts (god rays). 100 = vanilla, 0 = off.",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.01f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "FxFlare",
@@ -248,9 +273,9 @@ namespace {
           .section = "Effects",
           .tooltip = "Scales the game's lens flare. 100 = vanilla, 0 = off.",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.01f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .key = "FxVignette",
@@ -260,9 +285,9 @@ namespace {
           .section = "Effects",
           .tooltip = "Scales the game's vignette. 100 = vanilla, 0 = off.",
           .max = 100.f,
-          .is_enabled = []() { return shader_injection.tone_map_type >= 1.f; },
+          .is_enabled = IsModEnabled,
           .parse = [](float value) { return value * 0.01f; },
-          .is_visible = []() { return current_settings_mode >= 1.f; },
+          .is_visible = IsAdvancedMode,
       },
       new renodx::utils::settings::Setting{
           .value_type = renodx::utils::settings::SettingValueType::BUTTON,
@@ -331,28 +356,10 @@ namespace {
   };
 
   void OnPresetOff() {
-    // "Off" preset = pure native-HDR passthrough: ToneMapType 0 disables shader replacement, so
-    // every shader setting below is render-inert. Values reset to first-launch defaults except
-    // the pure-vanilla toggles: ToneMapType = 0 and ColorGradeLUTSampling = 0/Trilinear.
+    renodx::utils::settings::ResetSettings();
     renodx::utils::settings::UpdateSettings({
-        {"ToneMapType", 0.f},
-        {"ToneMapPeakNits", 1000.f},
-        {"ToneMapGameNits", 203.f},
-        {"GammaCorrection", 1.f},
-        {"ColorGradeExposure", 1.f},
-        {"ColorGradeHighlights", 50.f},
-        {"ColorGradeShadows", 50.f},
-        {"ColorGradeContrast", 50.f},
-        {"ColorGradeSaturation", 50.f},
-        {"ColorGradeHighlightSaturation", 50.f},
-        {"ColorGradeDechroma", 0.f},
-        {"ColorGradeFlare", 0.f},
-        {"ColorGradeLUTStrength", 100.f},
+        {"ToneMapType", HZD_TONE_MAP_TYPE_VANILLA},
         {"ColorGradeLUTSampling", 0.f},
-        {"FxBloom", 100.f},
-        {"FxLightShaft", 100.f},
-        {"FxFlare", 100.f},
-        {"FxVignette", 100.f},
       });
   }
 
@@ -372,7 +379,6 @@ namespace {
     fired_on_init_swapchain = true;
   }
 
-  // Reset the FMV flag each frame; the 0x6EC6FED7 callback re-sets it while a video decodes.
   void OnPresent(
     reshade::api::command_queue* queue,
     reshade::api::swapchain* swapchain,
@@ -380,7 +386,7 @@ namespace {
     const reshade::api::rect* dest_rect,
     uint32_t dirty_rect_count,
     const reshade::api::rect* dirty_rects) {
-    shader_injection.custom_video_active = 0.f;
+    shader_injection.custom_video_active = 0.f;  // Re-set by the 0x6EC6FED7 callback while a video decodes.
   }
 
 }  // namespace
@@ -401,10 +407,8 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       renodx::mods::shader::expected_constant_buffer_index = 0;
       renodx::mods::shader::expected_constant_buffer_space = 50;
 
-      // Only inject b0/space50 into the game's D3D12 pipeline layouts. ReShade overlay paths can
-      // surface non-D3D12 layouts; injecting into those hard-crashes the game at pipeline creation.
       renodx::mods::shader::on_init_pipeline_layout = [](reshade::api::device* device, auto, auto) {
-        return device->get_api() == reshade::api::device_api::d3d12;
+        return device->get_api() == reshade::api::device_api::d3d12;  // So overlays dont kill the game
         };
 
       reshade::register_event<reshade::addon_event::init_swapchain>(OnInitSwapchain);
