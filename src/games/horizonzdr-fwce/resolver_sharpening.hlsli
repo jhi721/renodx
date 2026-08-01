@@ -1,10 +1,12 @@
 #ifndef SRC_GAMES_HORIZONZDR_FWCE_RESOLVER_SHARPENING_HLSLI_
 #define SRC_GAMES_HORIZONZDR_FWCE_RESOLVER_SHARPENING_HLSLI_
 
+// Optional replacement for the AA/upscale resolvers' own CAS sharpening: Lilium HDR RCAS run on
+// the taps the resolver already fetched.
+
 static const float RESOLVER_RCAS_LIMIT = 0.1875f;  // = 3/16, the RCAS lobe clamp.
 static const float RESOLVER_RCAS_EPSILON = 1e-6f;  // Divide guard; never a visual threshold.
 
-// Lilium HDR RCAS uses the resolver's existing cross taps in linear BT.709.
 float GameSRGBDecode(float color) {
   if (color < 0.040449999272823334f) return color * 0.07739938050508499f;
   return pow(abs(color * 0.9478672742843628f + 0.05213269963860512f), 2.4000000953674316f);
@@ -38,13 +40,14 @@ float3 DecodeResolverColor(float3 color, float4 output_params) {
         GameSRGBDecode(color.x),
         GameSRGBDecode(color.y),
         GameSRGBDecode(color.z));
-    return pow(abs(color), inverse_exponent);
+    return pow(max(0.f, color), inverse_exponent);
   }
 
   if (output_mode == 2) {
-    float3 encoded_root = pow(abs(color), 0.012683313339948654f);
+    float3 encoded_root = pow(max(0.f, color), 0.012683313339948654f);
     color = (encoded_root - 0.8359375f) / (18.8515625f - encoded_root * 18.6875f);
-    color = pow(abs(color), inverse_exponent) / output_params.y;
+    color = pow(max(0.f, color), inverse_exponent) / output_params.y;
+
     return ResolverBT709FromBT2020(color);
   }
 
@@ -55,7 +58,7 @@ float3 EncodeResolverColor(float3 color, float4 output_params) {
   const int output_mode = int(output_params.w);
 
   if (output_mode == 1) {
-    color = pow(abs(color), output_params.x);
+    color = pow(max(0.f, color), output_params.x);
     return float3(
         GameSRGBEncode(color.x),
         GameSRGBEncode(color.y),
@@ -63,10 +66,10 @@ float3 EncodeResolverColor(float3 color, float4 output_params) {
   }
 
   if (output_mode == 2) {
-    color = ResolverBT2020FromBT709(color) * output_params.y;
-    float3 linear_root = pow(abs(color), output_params.x);
+    color = max(0.f, ResolverBT2020FromBT709(color) * output_params.y);
+    float3 linear_root = pow(color, output_params.x);
     color = (linear_root * 18.8515625f + 0.8359375f) / (linear_root * 18.6875f + 1.f);
-    return pow(abs(color), 78.84375f);
+    return pow(color, 78.84375f);
   }
 
   return color;
@@ -108,6 +111,19 @@ float3 ApplyResolverHDRRCAS(
   return clamp(renodx::math::DivideSafe(sharpened_luma, e_luma, 1.f), 0.f, 4.f) * e;
 }
 
+float GetResolverNormalizationPoint(float4 output_params) {
+  if ((injectedData.fx_resolver_sharpening_type < 1.f)
+      || (injectedData.fx_resolver_sharpening_strength == 0.f)) return 1.f;
+
+  const int output_mode = int(output_params.w);
+  if (output_mode == 2) return PeakRatio();
+  if ((output_mode != 1) || (output_params.x <= 0.f)) return 1.f;
+
+  return max(renodx::color::y::from::BT709(
+                 DecodeResolverColor(output_params.z.xxx, output_params)),
+             1.f);
+}
+
 float3 SelectResolverSharpening(
     float3 game_sharpened,
     float3 b,
@@ -115,7 +131,8 @@ float3 SelectResolverSharpening(
     float3 e,
     float3 f,
     float3 h,
-    float4 output_params) {
+    float4 output_params,
+    float normalization_point) {
   if (injectedData.fx_resolver_sharpening_type < 1.f) return game_sharpened;
 
   const float strength = injectedData.fx_resolver_sharpening_strength;
@@ -130,12 +147,6 @@ float3 SelectResolverSharpening(
   e = DecodeResolverColor(e, output_params);
   f = DecodeResolverColor(f, output_params);
   h = DecodeResolverColor(h, output_params);
-  const float normalization_point =
-      (output_mode == 2)
-          ? PeakRatio()
-          : max(renodx::color::y::from::BT709(
-                    DecodeResolverColor(output_params.z.xxx, output_params)),
-                1.f);
   return EncodeResolverColor(
       ApplyResolverHDRRCAS(b, d, e, f, h, strength, normalization_point),
       output_params);

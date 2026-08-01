@@ -1,7 +1,8 @@
-// Scene compose pass — no-AA variant.
-// Decompiled from the game's DXIL. Flow: AA/edge blend -> exposure -> grade ->
-// (flag&1 grain) -> (flag&2 rational compressor) -> gamma2 3D LUT -> (flag&4 highlight
-// re-expansion + peak clamp) -> encode switch Constant_176.w (1=sRGB, 2=BT.2020+PQ).
+// Scene compose pass — no-AA variant. Base of the three compose variants; the FXAA and
+// FXAA + sharpen twins differ only in the AA stage.
+// Flow: edge blend -> exposure -> grade -> (flag&1 grain) -> (flag&2 rational compressor)
+// -> gamma2 3D LUT -> (flag&4 highlight re-expansion + peak clamp) -> encode switch
+// Constant_176.w (1=sRGB, 2=BT.2020+PQ). Mode 2 = shared RenoDX path (../common.hlsli).
 
 #include "../common.hlsli"
 
@@ -592,18 +593,14 @@ OutputSignature main(
     if (_565) {
 #if 1
       // renodx
-      float3 vanilla_plus = ApplyRenoDXSceneOutput(
+      float3 renodx_output = ApplyRenoDXSceneOutput(
           float3(_346, _347, _348),
-          float3(_433, _434, _435),
-          _432,
-          !_351,
-          !_437,
           t1_space5, s1_space3,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_072.x,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_072.y);
-      _619 = vanilla_plus.r;
-      _620 = vanilla_plus.g;
-      _621 = vanilla_plus.b;
+      _619 = renodx_output.r;
+      _620 = renodx_output.g;
+      _621 = renodx_output.b;
 #else
       // vanilla
       float _567 = _512 * 0.6274039149284363f;

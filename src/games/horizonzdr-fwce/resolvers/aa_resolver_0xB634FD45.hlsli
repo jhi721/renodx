@@ -2,10 +2,8 @@
 #define SRC_GAMES_HORIZONZDR_FWCE_RESOLVERS_AA_RESOLVER_0XB634FD45_HLSLI_
 
 // AA/upscale resolver over the encoded frame: decode -> temporal resolve -> encode.
-// Decompiled from the game's DXIL. Vanilla+ replaces the game's output-space HDR cap
-// with the RenoDX PQ cap in GetResolverOutputParams, so Peak Brightness bounds temporal
-// sharpening overshoot without re-clipping at the in-game HDR Max Luminance setting.
-// This variant never calls SelectResolverSharpening: the cap rewrite is its only change.
+// Decompiled from the game's DXIL. This variant never calls SelectResolverSharpening, so
+// GetResolverOutputParams is its only RenoDX edit; see there for what the rewrite does.
 //
 // Shared by HZDR 0xB634FD45 and HFW 0xA2B068B0: both games ship this program with the same
 // instructions and the same constants, differing only in how the sampler is bound.

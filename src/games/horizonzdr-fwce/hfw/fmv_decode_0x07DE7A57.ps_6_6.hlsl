@@ -1,16 +1,5 @@
-// HFW CE FMV / video decode pass (Bink planes -> RGB), decompiled from the game's
-// DXIL. It matches hzdr/fmv_decode_0xA3F59A8C: YUV -> sRGB via the
-// cYUVToSRGBMatrix cbuffer matrix, piecewise sRGB decode (pow 2.4), then in HDR mode
-// (cHDROutputControl.x > 0) gamma-2.0 linearize + the compose-pass expansion family
-// driven by cHDROutputControl = (enable, boost, soft-knee, cap); per-pixel highlight
-// weight baked in the video alpha plane (APlane * 100). Output is LINEAR — the menu
-// output pass 0x55477A4D encodes it.
-//
-// Vanilla+ change (gated by ShouldReplaceShader; Vanilla runs original bytecode):
-// boost (.y) and cap (.w) use the mod's peak-calibrated native expansion so FMV
-// follows Peak / Game Brightness instead of the in-game HDR sliders.
-// The in-game Shadows soft knee (.z) is ignored. Scene and FMV share the same
-// calibrated luma evaluator and low-headroom guard.
+// HFW CE FMV / video decode pass.
+// It matches hzdr/fmv_decode_0xA3F59A8C.
 
 #include "../common.hlsli"
 
@@ -98,15 +87,12 @@ float4 main(
   }
   bool _89 = (cHDROutputControl.x > 0.0f);
   if (_89) {
-    float _94 = _62 * _62;
-    float _95 = _74 * _74;
-    float _96 = _86 * _86;
-    // Neutralizing the Shadows toe reduces the native soft-knee formula to these
-    // square-rooted channels while retaining the video's alpha-plane highlight weight.
-    float _108 = sqrt(_94);
-    float _109 = sqrt(_95);
-    float _110 = sqrt(_96);
-    // Vanilla+ replaces the in-game highlight boost/cap.
+    // Neutralizing the Shadows toe collapses the native soft-knee formula to abs() of the
+    // decoded channels; EvaluateNativeExpansionLuma says why abs and not the identity.
+    float _108 = abs(_62);
+    float _109 = abs(_74);
+    float _110 = abs(_86);
+    // RenoDX replaces the in-game highlight boost/cap.
     const NativeExpansionLuma expansion = EvaluateNativeExpansionLuma(
         dot(float3(_108, _109, _110),
             float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f)),

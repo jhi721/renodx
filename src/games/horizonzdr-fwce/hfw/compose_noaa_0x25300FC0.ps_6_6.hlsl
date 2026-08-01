@@ -1,23 +1,5 @@
-// HFW CE scene compose, no-AA variant, hand-ported from the game DXIL. Its math
-// matches the HZDR twin
-// hzdr/compose_noaa_0xDC3776F8: AA/edge blend -> exposure -> grade -> flag&1 grain
-// -> flag&2 rational compressor -> gamma-2.0 3D LUT -> flag&4 expansion -> 3-mode
-// OETF. Only the cbuffer layout differs (216B, fields named by HFW byte offsets):
-//   _000 uv transform        (HZDR Constant_000)
-//   _016 saturation rgb + w  (HZDR Constant_032)
-//   _032 vignette color + w  (HZDR Constant_048)
-//   _048 vignette scale/bias (HZDR Constant_064)
-//   _056 LUT scale/bias      (HZDR Constant_072)
-//   _064 grain uv + packed   (HZDR Constant_080)
-//   _080 viewport clamp int4 (HZDR Constant_096)
-//   _144 luma-gamma trio + w (HZDR Constant_160)
-//   _160 gamma pow / paper white / - / output mode (HZDR Constant_176)
-//   _176 grade scale trio    (HZDR Constant_192)
-//   _192 .z boost, .w knee   (HZDR Constant_216/220)
-//   _208 cap, _212 flags int (HZDR Constant_224 / Constant_016)
-// Samplers come from the SM6.6 sampler heap: [0] ~ s0, [2] ~ s1, [17] ~ s2 (grain).
-// Vanilla-faithful except the mode-2 (HDR10) branch, replaced with the shared
-// Vanilla+ transform (../common.hlsli) exactly like the HZDR wrappers.
+// HFW CE scene compose, no-AA variant. Twin of
+// hzdr/compose_noaa_0xDC3776F8, same math. Only the cbuffer layout differs.
 
 #include "../common.hlsli"
 
@@ -601,21 +583,15 @@ OutputSignature main(
   } else {
     bool _564 = (_514 == 2);
     if (_564) {
-      // Vanilla+ replaces the vanilla mode-2 tail (BT.2020 * paper white -> pow(gamma)
-      // -> PQ). This shader was hand-ported, so unlike its siblings it never carried a
-      // decompiled copy of that tail to retain under #else. See ../common.hlsli.
-      float3 vanilla_plus = ApplyRenoDXSceneOutput(
+      // RenoDX replaces the vanilla mode-2 tail (BT.2020 * paper white -> pow(gamma) -> PQ).
+      float3 renodx_output = ApplyRenoDXSceneOutput(
           float3(_345, _346, _347),
-          float3(_432, _433, _434),
-          _431,
-          !_350,
-          !_436,
           t1_space5, s1_heap,
           CB.ComposeDynamicBindings_Constant_056.x,
           CB.ComposeDynamicBindings_Constant_056.y);
-      _618 = vanilla_plus.r;
-      _619 = vanilla_plus.g;
-      _620 = vanilla_plus.b;
+      _618 = renodx_output.r;
+      _619 = renodx_output.g;
+      _620 = renodx_output.b;
     } else {
       _618 = _511;
       _619 = _512;

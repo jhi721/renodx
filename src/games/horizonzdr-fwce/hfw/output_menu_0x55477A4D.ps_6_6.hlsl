@@ -1,7 +1,5 @@
-// HFW CE menu / FMV / loading output encoder, hand-ported from the game DXIL.
-// Single input texture; InUniform_Constant_000 = (gamma pow, paper white, unused,
-// output mode: 1 = sRGB, 2 = BT.2020+PQ, else pass). The HZDR twin is
-// hzdr/output_menu_0x7475EFAE. Mode 2 uses the shared Vanilla+ fixed encode.
+// HFW CE menu / FMV / loading output encoder.
+// The HZDR twin is hzdr/output_menu_0x7475EFAE.
 
 #include "../common.hlsli"
 
@@ -25,10 +23,10 @@ float4 main(
     float3 powed = pow(abs(color), InUniform_Constant_000.x);
     color = float3(GameSRGBEncode(powed.x), GameSRGBEncode(powed.y), GameSRGBEncode(powed.z));
   } else if (output_mode == 2) {
-    // Vanilla+ replaces the vanilla BT.2020 * paper white -> pow(gamma) -> PQ tail:
+    // RenoDX replaces the vanilla BT.2020 * paper white -> pow(gamma) -> PQ tail:
     // grade -> EOTF emulation -> hue-preserving safety cap -> mod paper white -> PQ.
     // FMV arrives already display-mapped by the intercepted decode pass 0x07DE7A57.
-    color = ApplyVanillaPlusMenu(color);
+    color = ApplyEncodeOnlyOutput(color);
   }
 
   return float4(color, 1.f);

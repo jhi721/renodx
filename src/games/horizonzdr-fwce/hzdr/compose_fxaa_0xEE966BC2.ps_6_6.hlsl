@@ -1,7 +1,5 @@
-// Scene compose pass — FXAA variant.
-// Decompiled from the game's DXIL. Flow: AA/edge blend -> exposure -> grade ->
-// (flag&1 grain) -> (flag&2 rational compressor) -> gamma2 3D LUT -> (flag&4 highlight
-// re-expansion + peak clamp) -> encode switch Constant_176.w (1=sRGB, 2=BT.2020+PQ).
+// Scene compose pass — FXAA variant. Same flow as compose_noaa_0xDC3776F8, with FXAA 3.11
+// in place of its edge blend.
 
 #include "../common.hlsli"
 
@@ -745,18 +743,14 @@ OutputSignature main(
     if (_745) {
 #if 1
       // renodx
-      float3 vanilla_plus = ApplyRenoDXSceneOutput(
+      float3 renodx_output = ApplyRenoDXSceneOutput(
           float3(_526, _527, _528),
-          float3(_613, _614, _615),
-          _612,
-          !_531,
-          !_617,
           t1_space5, s1_space3,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_072.x,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_072.y);
-      _799 = vanilla_plus.r;
-      _800 = vanilla_plus.g;
-      _801 = vanilla_plus.b;
+      _799 = renodx_output.r;
+      _800 = renodx_output.g;
+      _801 = renodx_output.b;
 #else
       // vanilla
       float _747 = _692 * 0.6274039149284363f;

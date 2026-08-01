@@ -1,10 +1,5 @@
-// HFW CE scene compose pass — FXAA variant. Hand-ported from the HZDR
-// twin hzdr/compose_fxaa_0xEE966BC2, with the cbuffer remapped to the HFW 216-byte layout
-// and the grain texture moved t10 -> t9. The arithmetic op count and unique float
-// constants match the HFW DXIL. Flow: FXAA 3.11 /
-// edge blend -> exposure -> grade -> (flag&1 grain) -> (flag&2 rational compressor)
-// -> gamma2 3D LUT -> (flag&4 highlight re-expansion + peak clamp) -> encode switch
-// Constant_160.w (1=sRGB, 2=BT.2020+PQ). Mode 2 = shared Vanilla+ (../common.hlsli).
+// HFW CE scene compose pass — FXAA variant. Twin of hzdr/compose_fxaa_0xEE966BC2: same
+// arithmetic, HFW 216-byte cbuffer layout, grain texture at t9 instead of t10.
 
 #include "../common.hlsli"
 
@@ -743,18 +738,14 @@ OutputSignature main(
     if (_745) {
 #if 1
       // renodx
-      float3 vanilla_plus = ApplyRenoDXSceneOutput(
+      float3 renodx_output = ApplyRenoDXSceneOutput(
           float3(_526, _527, _528),
-          float3(_613, _614, _615),
-          _612,
-          !_531,
-          !_617,
           t1_space5, s1_space3,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_056.x,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_056.y);
-      _799 = vanilla_plus.r;
-      _800 = vanilla_plus.g;
-      _801 = vanilla_plus.b;
+      _799 = renodx_output.r;
+      _800 = renodx_output.g;
+      _801 = renodx_output.b;
 #else
       // vanilla
       float _747 = _692 * 0.6274039149284363f;

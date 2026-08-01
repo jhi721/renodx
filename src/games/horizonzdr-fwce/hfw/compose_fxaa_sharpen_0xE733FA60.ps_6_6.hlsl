@@ -1,12 +1,11 @@
-// HFW CE scene compose pass — FXAA + sharpen variant. Hand-ported from
-// the HZDR twin hzdr/compose_fxaa_sharpen_0xB04A45DA, with the cbuffer remapped to the HFW
-// 216-byte layout: sharpen params/rects moved rows 112/128/144 -> 96/112/128, the
-// sharpen mode mask (masks 512/1024/>>7/4/...) moved from a dedicated int @204 into
-// row11.w read as int (asint(Constant_176.w)), grain texture t10 -> t9. The arithmetic
-// op count and unique float constants match the HFW DXIL.
+// HFW CE scene compose pass — FXAA + sharpen variant. Twin of
+// hzdr/compose_fxaa_sharpen_0xB04A45DA: same arithmetic, HFW 216-byte cbuffer layout. Sharpen
+// params/rects sit at rows 96/112/128 instead of 112/128/144; the sharpen mode mask (512/1024/
+// >>7/4/...) has no dedicated int @204 and is read out of row11.w as asint(Constant_176.w);
+// grain texture is t9, not t10. Keep the two in step.
 // Flow: FXAA + sharpen -> exposure -> grade -> (flag&1 grain) -> (flag&2 rational
 // compressor) -> gamma2 3D LUT -> (flag&4 expansion + peak clamp) -> encode switch
-// Constant_160.w (1=sRGB, 2=BT.2020+PQ). Mode 2 = shared Vanilla+ (../common.hlsli).
+// Constant_160.w (1=sRGB, 2=BT.2020+PQ). Mode 2 = shared RenoDX path (../common.hlsli).
 
 #include "../common.hlsli"
 
@@ -877,18 +876,14 @@ OutputSignature main(
     if (_881) {
 #if 1
       // renodx
-      float3 vanilla_plus = ApplyRenoDXSceneOutput(
+      float3 renodx_output = ApplyRenoDXSceneOutput(
           float3(_662, _663, _664),
-          float3(_749, _750, _751),
-          _748,
-          !_667,
-          !_753,
           t1_space5, s1_space3,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_056.x,
           Scratch_PerBatch_000.Scratch_PerBatch_Constants_000.ComposeDynamicBindings_Constant_056.y);
-      _935 = vanilla_plus.r;
-      _936 = vanilla_plus.g;
-      _937 = vanilla_plus.b;
+      _935 = renodx_output.r;
+      _936 = renodx_output.g;
+      _937 = renodx_output.b;
 #else
       // vanilla
       float _883 = _828 * 0.6274039149284363f;
