@@ -341,7 +341,17 @@ namespace {
       },
       new renodx::utils::settings::Setting{
           .value_type = renodx::utils::settings::SettingValueType::TEXT,
-          .label = "- Requires HDR Rendering set to On in game (Display).\n- Use the in-game Brightness slider (Display) to adjust UI/HUD brightness.",
+          .label = "- Requires HDR Rendering (Display) set to On in game.",
+          .section = "About",
+      },
+      new renodx::utils::settings::Setting{
+          .value_type = renodx::utils::settings::SettingValueType::TEXT,
+          .label = "- Use the in-game Brightness slider (Display) to adjust UI/HUD brightness.",
+          .section = "About",
+      },
+      new renodx::utils::settings::Setting{
+          .value_type = renodx::utils::settings::SettingValueType::TEXT,
+          .label = "- Lilium RCAS requires the in-game Sharpness slider (Graphics) set to 5.",
           .section = "About",
       },
       new renodx::utils::settings::Setting{
