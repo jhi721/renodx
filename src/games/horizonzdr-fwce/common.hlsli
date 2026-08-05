@@ -55,7 +55,19 @@ float InternalPeakRatio() {
   return renodx::color::correct::GammaSafe(PeakRatio(), true, gamma);
 }
 
-static const float HORIZON_DISPLAY_MAP_CLIP = 100.f;
+// The shoulder the game uses for its own highlight expansion, reused as a display map: 1:1 below
+// the knee, rolling above it. Reaches the peak at cap * cap / knee - cap + knee and is clipped
+// past that, the way the vanilla expansion clamps to its own cap.
+//
+// The knee is held at 0.75 * cap above cap = 24, where the native fraction would otherwise reach
+// the cap itself: that leaves the roll-off with no room and puts the zero of (cap - knee) + color
+// inside the input range, which resolves to a NaN. Peak / Game Brightness reaches 83 on the
+// sliders, so this is reachable, not theoretical.
+float3 KneeDisplayMap(float3 color, float cap) {
+  const float knee = min(cap * cap * 0.03125f, cap * 0.75f);
+  const float3 rolled = (knee + cap) - ((cap * cap) / ((cap - knee) + color));
+  return min(lerp(rolled, color, step(color, knee.xxx)), cap.xxx);
+}
 
 // The space the game runs its own per-channel tone curve in - the flag&2 block wraps its
 // compressor in this pair and samples the LUT only after the inverse, so the space exists for the
@@ -90,10 +102,7 @@ float3 FinalizeOutput(float3 color, bool apply_display_map = false) {
 
   if (apply_display_map) {
     float3 curve_space = mul(HORIZON_TONE_CURVE_SPACE_FROM_BT709, color);
-    curve_space = min(
-        renodx::tonemap::neutwo::PerChannel(
-            curve_space, PeakRatio().xxx, HORIZON_DISPLAY_MAP_CLIP.xxx),
-        PeakRatio().xxx);
+    curve_space = KneeDisplayMap(curve_space, PeakRatio());
 
     color = max(0.f, mul(HORIZON_BT709_FROM_TONE_CURVE_SPACE, curve_space));
   }
@@ -189,20 +198,23 @@ struct NativeExpansionLuma {
   float cap;      // Ceiling in the pre-gamma domain
 };
 
-// Luma core of the game's native highlight expansion, with the boost and the cap recalibrated
-// against Peak / Game Brightness instead of the in-game HDR sliders. Used by the FMV decode of
-// both games, which keeps its own soft knee and chroma reconstruction around this shoulder.
+// Luma core of the game's native highlight expansion, with the cap recalibrated against
+// Peak / Game Brightness instead of the in-game HDR sliders. The boost stays the vanilla
+// cHDROutputControl.y: the shoulder saturates at boosted = 32 - cap + knee for any cap, and a
+// boost derived from the cap lands video white exactly on that point - a flat clipped band.
+// Used by the FMV decode of both games, which keeps its own soft knee and chroma reconstruction
+// around this shoulder.
 //
 // source_luma is the Rec.709 luma of abs() of the decoded channels, not of the channels
 // themselves: the game squares each channel and takes the root of the result, which is abs, and
 // YUV -> sRGB can land a channel below zero out of gamut, so the two are not the same thing.
-NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float weight) {
+NativeExpansionLuma EvaluateNativeExpansionLuma(float source_luma, float weight, float native_boost) {
   NativeExpansionLuma result;
   result.source = saturate(source_luma);
   result.cap = InternalPeakRatio();
 
   const float knee = result.cap * result.cap * 0.03125f;
-  const float boost = 32.f - result.cap + knee;
+  const float boost = max(1.f, native_boost);
   const float shoulder_mask = saturate(result.source - 0.5f);
   const float boost_curve = (shoulder_mask * shoulder_mask * (weight * 100.f))
                             + (1.f / (1.f - (result.source * 0.5f)));
