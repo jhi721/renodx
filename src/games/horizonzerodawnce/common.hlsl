@@ -160,7 +160,20 @@ float InternalPeakRatio() {
   return renodx::color::correct::GammaSafe(PeakRatio(), true, gamma);
 }
 
-static const float HZD_DISPLAY_MAP_CLIP = 100.f;
+// The game's own tone curve is exponential: the vanilla scene compose compresses with
+// 1 - exp(-color / s), written as exp2(x * -1/ln2) in 0xB444C8F0. Reused here as the display map,
+// 1:1 up to paper white and rolling from there into the peak.
+//
+// The shoulder is held under the cap because PeakRatio can be below 1 - a peak dimmer than Game
+// Brightness is a valid setting - and LuminanceCompress returns anything at or below the shoulder
+// untouched, which would leave an identity band above the ceiling.
+float3 ExponentialDisplayMap(float3 color, float cap) {
+  const float shoulder = min(1.f, cap * 0.75f);
+  return float3(
+      renodx::tonemap::dice::internal::LuminanceCompress(color.r, cap, shoulder),
+      renodx::tonemap::dice::internal::LuminanceCompress(color.g, cap, shoulder),
+      renodx::tonemap::dice::internal::LuminanceCompress(color.b, cap, shoulder));
+}
 
 // The add-on's only display map and HDR10 encode. Every replaced pass ends here: scene composite,
 // the menu/FMV/loading encoder, and - through that encoder - the FMV decode.
@@ -173,9 +186,7 @@ float3 FinalizeOutput(float3 color, bool apply_display_map = false) {
   const float3 source_bt709 = color;
 
   if (apply_display_map) {
-    color = min(
-        renodx::tonemap::neutwo::PerChannel(color, PeakRatio().xxx, HZD_DISPLAY_MAP_CLIP.xxx),
-        PeakRatio().xxx);
+    color = ExponentialDisplayMap(color, PeakRatio());
   }
 
   color = renodx::color::bt2020::from::BT709(color);
