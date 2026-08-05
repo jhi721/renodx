@@ -92,11 +92,11 @@ float4 main(
     float _108 = abs(_62);
     float _109 = abs(_74);
     float _110 = abs(_86);
-    // RenoDX replaces the in-game highlight boost/cap.
+    // RenoDX replaces the in-game highlight cap; the boost stays the game's own.
     const NativeExpansionLuma expansion = EvaluateNativeExpansionLuma(
         dot(float3(_108, _109, _110),
             float3(0.2125999927520752f, 0.7152000069618225f, 0.0722000002861023f)),
-        _21.x);
+        _21.x, cHDROutputControl.y);
     float _113 = expansion.source;
     float _129 = expansion.boosted;
     float _130 = max(_113, 9.999999717180685e-10f);
