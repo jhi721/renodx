@@ -3,7 +3,8 @@
   "id": "masseffectle",
   "title": "Mass Effect: Legendary Edition",
   "maintainers": [
-    "ShortFuse"
+    "ShortFuse",
+    "DristoforColumb"
   ],
   "status": "stable",
   "deploy": {
