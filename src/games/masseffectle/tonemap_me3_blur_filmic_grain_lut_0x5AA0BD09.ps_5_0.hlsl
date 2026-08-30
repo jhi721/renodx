@@ -11,8 +11,8 @@ cbuffer _Globals : register(b0) {
   float4 MotionBlurMaskScaleAndBias : packoffset(c5);
   float4x4 ScreenToWorld : packoffset(c6);
   float4x4 PrevViewProjMatrix : packoffset(c10);
-  float4 StaticVelocityParameters : packoffset(c14) = { 0.5, -0.5, 0.0125000002, 0.0222222228 };
-  float4 DynamicVelocityParameters : packoffset(c15) = { 0.0250000004, -0.0444444455, -0.0500000007, 0.088888891 };
+  float4 StaticVelocityParameters : packoffset(c14) = {0.5, -0.5, 0.0125000002, 0.0222222228};
+  float4 DynamicVelocityParameters : packoffset(c15) = {0.0250000004, -0.0444444455, -0.0500000007, 0.088888891};
   float StepOffsetsOpaque[5] : packoffset(c16);
   float StepWeightsOpaque[5] : packoffset(c21);
   float StepOffsetsTranslucent[5] : packoffset(c26);
@@ -53,10 +53,10 @@ Texture2D<float4> smpFilmicLUT : register(t7);
 #define cmp -
 
 void main(
-    float4 v0: TEXCOORD0,
-    float2 v1: TEXCOORD1,
-    out float4 o0: SV_Target0,
-    out float o1: SV_Target1) {
+    float4 v0 : TEXCOORD0,
+    float2 v1 : TEXCOORD1,
+    out float4 o0 : SV_Target0,
+    out float o1 : SV_Target1) {
   float4 r0, r1, r2, r3, r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -122,28 +122,31 @@ void main(
 
   float3 untonemapped = r0.xyz;
 
-  // TODO: Improve LUT sampling
   r0.xyz = float3(0.0616082214, 0.0616082214, 0.0616082214) * r0.xyz;
   r0.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.xx).x;
   r0.y = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
   r0.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
-  r0.xw = float2(0.05859375, 15) * r0.xz;
-  r0.w = floor(r0.w);
-  r0.z = r0.z * 15 + -r0.w;
-  r1.x = r0.w * 0.0625 + r0.x;
-  r1.y = 0.9375 * r0.y;
-  r1.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r1.xyxy;
-  r0.xyw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.xy).xyz;
-  r1.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.zw).xyz;
-  r1.xyz = r1.xyz + -r0.xyw;
-  r0.xyz = r0.zzz * r1.xyz + r0.xyw;
+  if (CUSTOM_LUT_SAMPLING == 0.f) {
+    r0.xw = float2(0.05859375, 15) * r0.xz;
+    r0.w = floor(r0.w);
+    r0.z = r0.z * 15 + -r0.w;
+    r1.x = r0.w * 0.0625 + r0.x;
+    r1.y = 0.9375 * r0.y;
+    r1.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r1.xyxy;
+    r0.xyw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.xy).xyz;
+    r1.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.zw).xyz;
+    r1.xyz = r1.xyz + -r0.xyw;
+    r0.xyz = r0.zzz * r1.xyz + r0.xyw;
+  } else {
+    r0.xyz = renodx::lut::SampleTetrahedral(ColorGradingLUT, r0.xyz);
+  }
   r0.xyz = GammaOverlayColor.xyz + r0.xyz;
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    r0.xyz = (GammaColorScaleAndInverse.xyz * r0.xyz);
-    r0.xyz = renodx::math::SignPow(r0.xyz, GammaColorScaleAndInverse.w);
-    r0.xyz = renodx::color::gamma::DecodeSafe(r0.xyz);
-    float3 tonemapped = renodx::draw::ToneMapPass(untonemapped, r0.xyz);
-    r0.xyz = tonemapped;
+    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
+    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
+    // Undo only what the game's filmic curve compressed; the anchor is that curve at mid grey.
+    r0.xyz = MELEToneMapFilmic(untonemapped, r0.xyz, smpFilmicLUT, smpFilmicLUTSampler_s, false,
+                                          MELE_VIGNETTE_TINT_ME3);
     // Scale and Encode later with film grain
   } else {
     r0.xyz = saturate(GammaColorScaleAndInverse.xyz * r0.xyz);
@@ -151,6 +154,7 @@ void main(
     r0.xyz = log2(r0.xyz);
     r0.xyz = GammaColorScaleAndInverse.www * r0.xyz;
     r0.xyz = exp2(r0.xyz);
+    r0.xyz = MELE_VIGNETTE_TINT_ME3 * r0.xyz;  // Vanilla keeps the tint here; the min() below clips it as the 8-bit target did.
   }
   r1.xy = v0.zw * ScreenUVScaleBias.xy + ScreenUVScaleBias.zw;
   r1.xy = float2(-0.5, -0.5) + r1.xy;
@@ -160,7 +164,7 @@ void main(
   r0.w = saturate(4 * r0.w);
   r1.x = r0.w * -2 + 3;
   r0.w = r0.w * r0.w;
-  r1.xyz = -r1.xxx * r0.www + float3(1.01036298, 1.00000572, 1.16309249);
+  r1.xyz = (-r1.xxx * r0.www + float3(1.01036298, 1.00000572, 1.16309249)) / MELE_VIGNETTE_TINT_ME3;
   r1.xyz = lerp(1.f, r1.xyz, CUSTOM_VIGNETTE);
   if (RENODX_TONE_MAP_TYPE != 0.f) {
     if (FilmGrain_Scale > 0 && CUSTOM_FILM_GRAIN > 0.f) {
@@ -186,7 +190,7 @@ void main(
     o0.w = dot(r0.xyz, float3(0.298999995, 0.587000012, 0.114));
     r0.xyz = saturate(r0.xyz);
   }
-  r0.w = dot(r0.xyz, float3(0.212670997, 0.715160012, 0.0721689984));
+  r0.w = MELEOutputLuma(r0.xyz);
   r0.w = r0.w * 15 + 1;
   r0.w = log2(r0.w);
   o1.x = 0.25 * r0.w;

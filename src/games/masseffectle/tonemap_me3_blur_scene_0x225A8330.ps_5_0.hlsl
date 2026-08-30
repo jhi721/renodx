@@ -11,8 +11,8 @@ cbuffer _Globals : register(b0) {
   float4 MotionBlurMaskScaleAndBias : packoffset(c5);
   float4x4 ScreenToWorld : packoffset(c6);
   float4x4 PrevViewProjMatrix : packoffset(c10);
-  float4 StaticVelocityParameters : packoffset(c14) = { 0.5, -0.5, 0.0125000002, 0.0222222228 };
-  float4 DynamicVelocityParameters : packoffset(c15) = { 0.0250000004, -0.0444444455, -0.0500000007, 0.088888891 };
+  float4 StaticVelocityParameters : packoffset(c14) = {0.5, -0.5, 0.0125000002, 0.0222222228};
+  float4 DynamicVelocityParameters : packoffset(c15) = {0.0250000004, -0.0444444455, -0.0500000007, 0.088888891};
   float StepOffsetsOpaque[5] : packoffset(c16);
   float StepWeightsOpaque[5] : packoffset(c21);
   float StepOffsetsTranslucent[5] : packoffset(c26);
@@ -48,10 +48,10 @@ Texture2D<float4> BlurredImageSeperateBloom : register(t4);
 #define cmp -
 
 void main(
-    float4 v0: TEXCOORD0,
-    float2 v1: TEXCOORD1,
-    out float4 o0: SV_Target0,
-    out float o1: SV_Target1) {
+    float4 v0 : TEXCOORD0,
+    float2 v1 : TEXCOORD1,
+    out float4 o0 : SV_Target0,
+    out float o1 : SV_Target1) {
   float4 r0, r1, r2, r3, r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -125,12 +125,12 @@ void main(
   r0.xyz = r0.xyz * SceneShadowsAndDesaturation.www + r0.www;
   r0.xyz = GammaOverlayColor.xyz + r0.xyz;
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    r0.xyz = (GammaColorScaleAndInverse.xyz * r0.xyz);
-    r0.xyz = renodx::math::SignPow(r0.xyz, GammaColorScaleAndInverse.w);
-    r0.xyz = float3(1.01036298, 1.00000572, 1.16309249) * r0.xyz;
-    r0.xyz = renodx::color::gamma::DecodeSafe(r0.xyz, 2.2f);
-    o0.w = dot(r0.xyz, float3(0.298999995, 0.587000012, 0.114));
-    float3 tonemapped = renodx::draw::ToneMapPass(untonemapped, r0.xyz);
+    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
+    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
+    // Vanilla takes this dot in the encoded domain, ahead of its own clamp, so re-encode for it.
+    o0.w = dot(renodx::color::gamma::EncodeSafe(saturate(r0.xyz), 2.2f) * MELE_VIGNETTE_TINT_ME3,
+               float3(0.298999995, 0.587000012, 0.114));
+    float3 tonemapped = MELEToneMapClipped(untonemapped, r0.xyz, MELE_VIGNETTE_TINT_ME3);
     tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {
@@ -144,7 +144,7 @@ void main(
     r0.xyz = min(float3(1, 1, 1), r0.xyz);
   }
 
-  r0.w = dot(r0.xyz, float3(0.212670997, 0.715160012, 0.0721689984));
+  r0.w = MELEOutputLuma(r0.xyz);
   r0.w = r0.w * 15 + 1;
   r0.w = log2(r0.w);
   o1.x = 0.25 * r0.w;
