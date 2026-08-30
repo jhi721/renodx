@@ -5,24 +5,20 @@
 cbuffer HDRParamsIn : register(b0) {
   struct
   {
-    float MaxReconstructedNits;          // 1000
-    float ReconstructedColorSaturation;  // 0
-    float PaperWhiteNits;                // 250
-    float UIBrightnessScale;             // 1/2.77777
-    float DisplayGamma;                  // 2.2
-    float HDRGamma;                      // 1.25
-    float SoftShoulderStart2084;         // 0.5080784
-    float MaxBrightnessOfDisplay2084;    // 0.7275278
-    float MaxBrightnessOfScene2084;      // 0.7896337
-    int bIsHDR10;                        // 0
-    int bUseGamutExpansion;              // 1
-    int Pad0;                            // 0
-  }
-HDRParameters:
-  packoffset(c0);
+    float MaxReconstructedNits;
+    float ReconstructedColorSaturation;
+    float PaperWhiteNits;
+    float UIBrightnessScale;
+    float DisplayGamma;
+    float HDRGamma;
+    float SoftShoulderStart2084;
+    float MaxBrightnessOfDisplay2084;
+    float MaxBrightnessOfScene2084;
+    int bIsHDR10;
+    int bUseGamutExpansion;
+    int Pad0;
+  } HDRParameters : packoffset(c0);
 }
-
-//
 
 SamplerState SourceTextureSampler_s : register(s0);
 Texture2D<float4> SourceTexture : register(t0);
@@ -33,8 +29,8 @@ Texture2D<float4> RenderTexture : register(t3);
 #define cmp -
 
 void main(
-    float2 v0: TEXCOORD0,
-    out float4 o0: SV_Target0) {
+    float2 v0 : TEXCOORD0,
+    out float4 o0 : SV_Target0) {
   float4 r0, r1, r2, r3, r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -49,7 +45,10 @@ void main(
   r1.xyzw = SourceTexture.Sample(SourceTextureSampler_s, v0.xy).xyzw;
 
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    o0 = float4(renodx::color::gamma::DecodeSafe(r1.rgb) * RENODX_GRAPHICS_WHITE_NITS / 80.f, 1.f);
+    // renodx: gamma 2.2 frame to scRGB at UI brightness, with negatives and NaN zeroed.
+    o0 = float4(max(0.f, renodx::math::ZeroNaN(renodx::color::gamma::DecodeSafe(r1.rgb)))
+                    * RENODX_GRAPHICS_WHITE_NITS / 80.f,
+                1.f);
     return;
   }
 

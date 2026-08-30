@@ -1,6 +1,6 @@
 #include "./shared.h"
 
-// ---- Created with 3Dmigoto v1.4.1 on Sat May 31 21:16:26 2025
+// ---- Created with 3Dmigoto v1.3.16 on Sat Aug 29 11:20:51 2026
 
 cbuffer _Globals : register(b0) {
   float4 PackedParameters : packoffset(c0);
@@ -20,8 +20,6 @@ cbuffer _Globals : register(b0) {
   float StepWeightsOpaque[5] : packoffset(c24);
   float StepOffsetsTranslucent[5] : packoffset(c29);
   float StepWeightsTranslucent[5] : packoffset(c34);
-  float4 NoiseTextureOffset : packoffset(c39);
-  float FilmGrain_Scale : packoffset(c40);
 }
 
 cbuffer PSOffsetConstants : register(b2) {
@@ -38,7 +36,7 @@ SamplerState DOFBlurredFarSampler_s : register(s4);
 SamplerState BlurredImageSeperateBloomSampler_s : register(s5);
 SamplerState ColorGradingLUTSampler_s : register(s6);
 SamplerState VelocityBufferSampler_s : register(s7);
-SamplerState NoiseTextureSampler_s : register(s8);
+SamplerState smpFilmicLUTSampler_s : register(s8);
 Texture2D<float4> SceneDepthTexture : register(t0);
 Texture2D<float4> SceneColorTexture : register(t1);
 Texture2D<float4> DOFTexture : register(t2);
@@ -47,7 +45,7 @@ Texture2D<float4> DOFBlurredFar : register(t4);
 Texture2D<float4> BlurredImageSeperateBloom : register(t5);
 Texture2D<float4> ColorGradingLUT : register(t6);
 Texture2D<float4> VelocityBuffer : register(t7);
-Texture2D<float4> NoiseTexture : register(t8);
+Texture2D<float4> smpFilmicLUT : register(t8);
 
 // 3Dmigoto declarations
 #define cmp -
@@ -162,33 +160,43 @@ void main(
     r2.xyz = -r3.xyz + r2.xyz;
     r1.xyz = r0.zzz * r2.xyz + r3.xyz;
   }
+
   r0.xyz = BlurredImageSeperateBloom.Sample(BlurredImageSeperateBloomSampler_s, r0.xy).xyz;
-  r0.xyz = BloomTintAndScreenBlendThreshold.zxy * r0.zxy;
-  r0.w = dot(r1.yzx, float3(0.298999995, 0.587000012, 0.114));
+  r0.xyz = BloomTintAndScreenBlendThreshold.xyz * r0.xyz;
+  r0.w = dot(r1.xyz, float3(0.298999995, 0.587000012, 0.114));
   r0.xyzw = float4(4, 4, 4, -3) * r0.xyzw;
   r0.w = exp2(r0.w);
   r0.w = saturate(BloomTintAndScreenBlendThreshold.w * r0.w) * CUSTOM_BLOOM;
 
   const float3 scene = r1.xyz;
-  const float3 bloom = r0.yzx * r0.www;
+  const float3 bloom = r0.xyz * r0.www;
 
   {
-    r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.zxy;
+    r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
     r1.xyz = exp2(r1.xyz);
     r1.xyz = float3(1, 1, 1) + -r1.xyz;
   }
+
   r0.xyz = r0.xyz * r0.www + r1.xyz;
-  r0.xyz = MELEGradeME12(r0.yzx);
+
+  r0.xyz = float3(0.0616082214, 0.0616082214, 0.0616082214) * r0.xyz;
+  r1.y = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.xx).x;
+  r1.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
+  r1.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
+  r1.xyz = saturate(r1.xyz);
+  r0.xyz = MELEGradeColorLUT(r1.yzx);
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    r0.xyz = MELEToneMapME12(r0.xyz, scene, bloom, MELE_VIGNETTE_TINT_ME1);
-    // Scaled and encoded after film grain below.
+    float3 tonemapped = MELEToneMapFilmic(r0.xyz, MELEExpWork(scene, bloom), r1.yzx, true, smpFilmicLUT,
+                                        smpFilmicLUTSampler_s, MELE_VIGNETTE_TINT_ME2);
+    tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
+    r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {
     r0.xyz = saturate(GammaColorScaleAndInverse.xyz * r0.xyz);
     r0.xyz = max(float3(9.99999975e-05, 9.99999975e-05, 9.99999975e-05), r0.xyz);
     r0.xyz = log2(r0.xyz);
     r0.xyz = GammaColorScaleAndInverse.www * r0.xyz;
     r0.xyz = exp2(r0.xyz);
-    r0.xyz = MELE_VIGNETTE_TINT_ME1 * r0.xyz;  // White-point tint, divided back out of the vignette below.
+    r0.xyz = MELE_VIGNETTE_TINT_ME2 * r0.xyz;  // White-point tint, divided back out of the vignette below.
   }
   r1.xy = float2(-0.5, -0.5) + v0.zw;
   r1.xy = float2(0.832050323, 0.554700196) * r1.xy;
@@ -199,29 +207,13 @@ void main(
   r0.w = exp2(r0.w);
   r0.w = 1 + -r0.w;
   r0.w = log2(r0.w);
-  r0.w = 100 * r0.w;
+  r0.w = 200 * r0.w;
   r0.w = exp2(r0.w);
-  r1.xyz = (float3(0.0103630004, 5.75000013e-06, 0.0130924946) + r0.www) / MELE_VIGNETTE_TINT_ME1;
+  r1.xyz = (float3(0.0103630004, 5.75000013e-06, 0.163092494) + r0.www) / MELE_VIGNETTE_TINT_ME2;
   r1.xyz = lerp(1.f, r1.xyz, CUSTOM_VIGNETTE);
-  if (RENODX_TONE_MAP_TYPE != 0.f) {
-    if (FilmGrain_Scale > 0 && CUSTOM_FILM_GRAIN > 0.f) {
-      r0.xyz = renodx::effects::ApplyFilmGrain(
-          r0.xyz,
-          v0.zw,
-          CUSTOM_RANDOM,
-          FilmGrain_Scale / 0.06 * CUSTOM_FILM_GRAIN * 0.03f,
-          1.f);
-    }
-    r0.xyz *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    r0.xyz = renodx::color::gamma::EncodeSafe(r0.rgb, 2.2f);
-    // Vignette in gamma.
-    r0.xyz = r0.xyz * r1.xyz;
-  } else {
-    r2.xy = v0.zw * NoiseTextureOffset.xy + NoiseTextureOffset.zw;
-    r0.w = NoiseTexture.Sample(NoiseTextureSampler_s, r2.xy).x;
-    r0.w = -0.5 + r0.w;
-    r0.w = FilmGrain_Scale * r0.w;
-    r0.xyz = saturate(r0.xyz * r1.xyz + r0.www);
+  r0.xyz = r1.xyz * r0.xyz;
+  if (RENODX_TONE_MAP_TYPE == 0.f) {
+    r0.xyz = min(float3(1, 1, 1), r0.xyz);
   }
   r0.w = MELEOutputLuma(r0.xyz);
   r0.w = r0.w * 15 + 1;
