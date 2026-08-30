@@ -1,29 +1,25 @@
 #include "./shared.h"
 
-// ---- Created with 3Dmigoto v1.3.16 on Mon Aug  4 14:59:35 2025
+// ---- Created with 3Dmigoto v1.3.16 on Sat Aug 29 11:20:51 2026
 
 cbuffer _Globals : register(b0) {
   float4 PackedParameters : packoffset(c0);
   float4 InputTextureSize : packoffset(c1);
   float4 MinMaxBlurClamp : packoffset(c2);
   float4 DOFKernelParams : packoffset(c3);
-  float4 RenderTargetClampParameter : packoffset(c4);
-  float4 MotionBlurMaskScaleAndBias : packoffset(c5);
-  float4x4 ScreenToWorld : packoffset(c6);
-  float4x4 PrevViewProjMatrix : packoffset(c10);
-  float4 StaticVelocityParameters : packoffset(c14) = {0.5, -0.5, 0.0125000002, 0.0222222228};
-  float4 DynamicVelocityParameters : packoffset(c15) = {0.0250000004, -0.0444444455, -0.0500000007, 0.088888891};
-  float StepOffsetsOpaque[5] : packoffset(c16);
-  float StepWeightsOpaque[5] : packoffset(c21);
-  float StepOffsetsTranslucent[5] : packoffset(c26);
-  float StepWeightsTranslucent[5] : packoffset(c31);
-  float4 BloomTintAndScreenBlendThreshold : packoffset(c36);
-  float4 HalfResMaskRect : packoffset(c37);
-  float4 GammaColorScaleAndInverse : packoffset(c38);
-  float4 GammaOverlayColor : packoffset(c39);
-  float4 NoiseTextureOffset : packoffset(c40);
-  float FilmGrain_Scale : packoffset(c41);
-  float4 ScreenUVScaleBias : packoffset(c42);
+  float4 BloomTintAndScreenBlendThreshold : packoffset(c4);
+  float4 GammaColorScaleAndInverse : packoffset(c5);
+  float4 GammaOverlayColor : packoffset(c6);
+  float4 RenderTargetClampParameter : packoffset(c7);
+  float4 MotionBlurMaskScaleAndBias : packoffset(c8);
+  float4x4 ScreenToWorld : packoffset(c9);
+  float4x4 PrevViewProjMatrix : packoffset(c13);
+  float4 StaticVelocityParameters : packoffset(c17) = {0.5, -0.5, 0.0125000002, 0.0222222228};
+  float4 DynamicVelocityParameters : packoffset(c18) = {0.0250000004, -0.0444444455, -0.0500000007, 0.088888891};
+  float StepOffsetsOpaque[5] : packoffset(c19);
+  float StepWeightsOpaque[5] : packoffset(c24);
+  float StepOffsetsTranslucent[5] : packoffset(c29);
+  float StepWeightsTranslucent[5] : packoffset(c34);
 }
 
 cbuffer PSOffsetConstants : register(b2) {
@@ -34,24 +30,22 @@ cbuffer PSOffsetConstants : register(b2) {
 
 SamplerState SceneDepthTextureSampler_s : register(s0);
 SamplerState SceneColorTextureSampler_s : register(s1);
-SamplerState VelocityBufferSampler_s : register(s2);
-SamplerState DOFTextureSampler_s : register(s3);
-SamplerState DOFBlurredNearSampler_s : register(s4);
-SamplerState DOFBlurredFarSampler_s : register(s5);
-SamplerState BlurredImageSeperateBloomSampler_s : register(s6);
-SamplerState ColorGradingLUTSampler_s : register(s7);
-SamplerState NoiseTextureSampler_s : register(s8);
-SamplerState smpFilmicLUTSampler_s : register(s9);
+SamplerState DOFTextureSampler_s : register(s2);
+SamplerState DOFBlurredNearSampler_s : register(s3);
+SamplerState DOFBlurredFarSampler_s : register(s4);
+SamplerState BlurredImageSeperateBloomSampler_s : register(s5);
+SamplerState ColorGradingLUTSampler_s : register(s6);
+SamplerState VelocityBufferSampler_s : register(s7);
+SamplerState smpFilmicLUTSampler_s : register(s8);
 Texture2D<float4> SceneDepthTexture : register(t0);
 Texture2D<float4> SceneColorTexture : register(t1);
-Texture2D<float4> VelocityBuffer : register(t2);
-Texture2D<float4> DOFTexture : register(t3);
-Texture2D<float4> DOFBlurredNear : register(t4);
-Texture2D<float4> DOFBlurredFar : register(t5);
-Texture2D<float4> BlurredImageSeperateBloom : register(t6);
-Texture2D<float4> ColorGradingLUT : register(t7);
-Texture2D<float4> NoiseTexture : register(t8);
-Texture2D<float4> smpFilmicLUT : register(t9);
+Texture2D<float4> DOFTexture : register(t2);
+Texture2D<float4> DOFBlurredNear : register(t3);
+Texture2D<float4> DOFBlurredFar : register(t4);
+Texture2D<float4> BlurredImageSeperateBloom : register(t5);
+Texture2D<float4> ColorGradingLUT : register(t6);
+Texture2D<float4> VelocityBuffer : register(t7);
+Texture2D<float4> smpFilmicLUT : register(t8);
 
 // 3Dmigoto declarations
 #define cmp -
@@ -92,37 +86,24 @@ void main(
   r2.xy = r0.zw * StepOffsetsOpaque[1] + r0.xy;
   r2.xy = max(RenderTargetClampParameter.xy, r2.xy);
   r2.xy = min(RenderTargetClampParameter.zw, r2.xy);
-  r1.w = VelocityBuffer.Sample(VelocityBufferSampler_s, r2.xy).x;
-  r2.z = 0.200000003 * r1.w;
-  r2.xyw = SceneColorTexture.Sample(SceneColorTextureSampler_s, r2.xy).xyz;
-  r2.xyz = r2.xyw * r2.zzz;
+  r2.xyz = SceneColorTexture.Sample(SceneColorTextureSampler_s, r2.xy).xyz;
+  r2.xyz = float3(0.200000003, 0.200000003, 0.200000003) * r2.xyz;
   r2.xyz = r1.xyz * float3(0.200000003, 0.200000003, 0.200000003) + r2.xyz;
-  r1.w = r1.w * 0.200000003 + 0.200000003;
   r3.xy = r0.zw * StepOffsetsOpaque[2] + r0.xy;
   r3.xy = max(RenderTargetClampParameter.xy, r3.xy);
   r3.xy = min(RenderTargetClampParameter.zw, r3.xy);
-  r2.w = VelocityBuffer.Sample(VelocityBufferSampler_s, r3.xy).x;
-  r3.z = 0.200000003 * r2.w;
-  r3.xyw = SceneColorTexture.Sample(SceneColorTextureSampler_s, r3.xy).xyz;
-  r2.xyz = r3.xyw * r3.zzz + r2.xyz;
-  r1.w = r2.w * 0.200000003 + r1.w;
+  r3.xyz = SceneColorTexture.Sample(SceneColorTextureSampler_s, r3.xy).xyz;
+  r2.xyz = r3.xyz * float3(0.200000003, 0.200000003, 0.200000003) + r2.xyz;
   r3.xy = r0.zw * StepOffsetsOpaque[3] + r0.xy;
   r3.xy = max(RenderTargetClampParameter.xy, r3.xy);
   r3.xy = min(RenderTargetClampParameter.zw, r3.xy);
-  r2.w = VelocityBuffer.Sample(VelocityBufferSampler_s, r3.xy).x;
-  r3.z = 0.200000003 * r2.w;
-  r3.xyw = SceneColorTexture.Sample(SceneColorTextureSampler_s, r3.xy).xyz;
-  r2.xyz = r3.xyw * r3.zzz + r2.xyz;
-  r1.w = r2.w * 0.200000003 + r1.w;
+  r3.xyz = SceneColorTexture.Sample(SceneColorTextureSampler_s, r3.xy).xyz;
+  r2.xyz = r3.xyz * float3(0.200000003, 0.200000003, 0.200000003) + r2.xyz;
   r3.xy = r0.zw * StepOffsetsOpaque[4] + r0.xy;
   r3.xy = max(RenderTargetClampParameter.xy, r3.xy);
   r3.xy = min(RenderTargetClampParameter.zw, r3.xy);
-  r2.w = VelocityBuffer.Sample(VelocityBufferSampler_s, r3.xy).x;
-  r3.z = 0.200000003 * r2.w;
-  r3.xyw = SceneColorTexture.Sample(SceneColorTextureSampler_s, r3.xy).xyz;
-  r2.xyz = r3.xyw * r3.zzz + r2.xyz;
-  r1.w = r2.w * 0.200000003 + r1.w;
-  r2.xyz = r2.xyz / r1.www;
+  r3.xyz = SceneColorTexture.Sample(SceneColorTextureSampler_s, r3.xy).xyz;
+  r2.xyz = r3.xyz * float3(0.200000003, 0.200000003, 0.200000003) + r2.xyz;
   r0.zw = MotionBlurMaskScaleAndBias.xy * r0.zw;
   r0.z = dot(r0.zw, r0.zw);
   r0.z = sqrt(r0.z);
@@ -177,6 +158,10 @@ void main(
     r2.xyz = -r3.xyz + r2.xyz;
     r1.xyz = r0.zzz * r2.xyz + r3.xyz;
   }
+
+  // r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
+  // r1.xyz = exp2(r1.xyz);
+  // r1.xyz = float3(1, 1, 1) + -r1.xyz;
   r0.xyz = BlurredImageSeperateBloom.Sample(BlurredImageSeperateBloomSampler_s, r0.xy).xyz;
   r0.xyz = BloomTintAndScreenBlendThreshold.xyz * r0.xyz;
   r0.w = dot(r1.xyz, float3(0.298999995, 0.587000012, 0.114));
@@ -184,82 +169,73 @@ void main(
   r0.w = exp2(r0.w);
   r0.w = saturate(BloomTintAndScreenBlendThreshold.w * r0.w) * CUSTOM_BLOOM;
 
+  float3 untonemapped = r0.xyz * r0.www + r1.xyz;
+
+  {
+    r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
+    r1.xyz = exp2(r1.xyz);
+    r1.xyz = float3(1, 1, 1) + -r1.xyz;
+  }
+
   r0.xyz = r0.xyz * r0.www + r1.xyz;
 
-  float3 untonemapped = r0.xyz;
-
   r0.xyz = float3(0.0616082214, 0.0616082214, 0.0616082214) * r0.xyz;
-  r0.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.xx).x;
-  r0.y = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
-  r0.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
+  r1.y = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.xx).x;
+  r1.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
+  r1.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
+  r1.xyz = saturate(r1.xyz);
   if (CUSTOM_LUT_SAMPLING == 0.f) {
-    r0.xw = float2(0.05859375, 15) * r0.xz;
-    r0.w = floor(r0.w);
-    r0.z = r0.z * 15 + -r0.w;
-    r1.x = r0.w * 0.0625 + r0.x;
-    r1.y = 0.9375 * r0.y;
-    r1.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r1.xyxy;
-    r0.xyw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.xy).xyz;
-    r1.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.zw).xyz;
-    r1.xyz = r1.xyz + -r0.xyw;
-    r0.xyz = r0.zzz * r1.xyz + r0.xyw;
+    r0.yzw = float3(15, 0.05859375, 0.9375) * r1.xyz;
+    r0.y = floor(r0.y);
+    r1.x = r1.x * 15 + -r0.y;
+    r0.x = r0.y * 0.0625 + r0.z;
+    r0.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r0.xwxw;
+    r1.yzw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.xy).xyz;
+    r0.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.zw).xyz;
+    r0.xyz = r0.xyz + -r1.yzw;
+    r0.xyz = r1.xxx * r0.xyz + r1.yzw;
   } else {
-    r0.xyz = renodx::lut::SampleTetrahedral(ColorGradingLUT, r0.xyz);
+    r0.xyz = renodx::lut::SampleTetrahedral(ColorGradingLUT, r1.yzx);
   }
   r0.xyz = GammaOverlayColor.xyz + r0.xyz;
   if (RENODX_TONE_MAP_TYPE != 0.f) {
     // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
     r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
     // Undo only what the game's filmic curve compressed; the anchor is that curve at mid grey.
-    r0.xyz = MELEToneMapFilmic(untonemapped, r0.xyz, smpFilmicLUT, smpFilmicLUTSampler_s, false,
-                                          MELE_VIGNETTE_TINT_ME3);
-    // Scale and Encode later with film grain
+    float3 tonemapped = MELEToneMapFilmic(untonemapped, r0.xyz, smpFilmicLUT, smpFilmicLUTSampler_s, true,
+                                          MELE_VIGNETTE_TINT_ME2);
+    tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
+    r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {
     r0.xyz = saturate(GammaColorScaleAndInverse.xyz * r0.xyz);
     r0.xyz = max(float3(9.99999975e-05, 9.99999975e-05, 9.99999975e-05), r0.xyz);
     r0.xyz = log2(r0.xyz);
     r0.xyz = GammaColorScaleAndInverse.www * r0.xyz;
     r0.xyz = exp2(r0.xyz);
-    r0.xyz = MELE_VIGNETTE_TINT_ME3 * r0.xyz;  // Vanilla keeps the tint here; the min() below clips it as the 8-bit target did.
+    r0.xyz = MELE_VIGNETTE_TINT_ME2 * r0.xyz;  // Vanilla keeps the tint here; the min() below clips it as the 8-bit target did.
   }
-  r1.xy = v0.zw * ScreenUVScaleBias.xy + ScreenUVScaleBias.zw;
-  r1.xy = float2(-0.5, -0.5) + r1.xy;
+  r1.xy = float2(-0.5, -0.5) + v0.zw;
   r1.xy = float2(0.832050323, 0.554700196) * r1.xy;
   r0.w = dot(r1.xy, r1.xy);
-  r0.w = -0.0500000007 + r0.w;
-  r0.w = saturate(4 * r0.w);
-  r1.x = r0.w * -2 + 3;
-  r0.w = r0.w * r0.w;
-  r1.xyz = (-r1.xxx * r0.www + float3(1.01036298, 1.00000572, 1.16309249)) / MELE_VIGNETTE_TINT_ME3;
+  r0.w = max(9.99999975e-05, r0.w);
+  r0.w = log2(r0.w);
+  r0.w = 3.25 * r0.w;
+  r0.w = exp2(r0.w);
+  r0.w = 1 + -r0.w;
+  r0.w = log2(r0.w);
+  r0.w = 200 * r0.w;
+  r0.w = exp2(r0.w);
+  r1.xyz = (float3(0.0103630004, 5.75000013e-06, 0.163092494) + r0.www) / MELE_VIGNETTE_TINT_ME2;
   r1.xyz = lerp(1.f, r1.xyz, CUSTOM_VIGNETTE);
-  if (RENODX_TONE_MAP_TYPE != 0.f) {
-    if (FilmGrain_Scale > 0 && CUSTOM_FILM_GRAIN > 0.f) {
-      r0.xyz = renodx::effects::ApplyFilmGrain(
-          r0.xyz,
-          v0.zw,
-          CUSTOM_RANDOM,
-          FilmGrain_Scale / 0.06 * CUSTOM_FILM_GRAIN * 0.03f,
-          1.f);
-    }
-    r0.xyz *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
-    r0.xyz = renodx::color::gamma::EncodeSafe(r0.rgb, 2.2f);
-    // vignette in gamma
-    r0.xyz = r0.xyz * r1.xyz;
-
-    o0.w = dot(r0.xyz, float3(0.298999995, 0.587000012, 0.114));
-  } else {
-    r2.xy = v0.zw * NoiseTextureOffset.xy + NoiseTextureOffset.zw;
-    r0.w = NoiseTexture.Sample(NoiseTextureSampler_s, r2.xy).x;
-    r0.w = -0.5 + r0.w;
-    r0.w = FilmGrain_Scale * r0.w;
-    r0.xyz = r0.xyz * r1.xyz + r0.www;
-    o0.w = dot(r0.xyz, float3(0.298999995, 0.587000012, 0.114));
-    r0.xyz = saturate(r0.xyz);
+  r0.xyz = r1.xyz * r0.xyz;
+  if (RENODX_TONE_MAP_TYPE == 0.f) {
+    r0.xyz = min(float3(1, 1, 1), r0.xyz);
   }
   r0.w = MELEOutputLuma(r0.xyz);
   r0.w = r0.w * 15 + 1;
   r0.w = log2(r0.w);
   o1.x = 0.25 * r0.w;
   o0.xyz = r0.xyz;
+  o0.w = 0;
   return;
 }

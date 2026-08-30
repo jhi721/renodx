@@ -17,9 +17,7 @@ cbuffer HDRParamsIn : register(b0) {
     int bIsHDR10;                        // 0
     int bUseGamutExpansion;              // 1
     int Pad0;                            // 0
-  }
-HDRParameters:
-  packoffset(c0);
+  } HDRParameters : packoffset(c0);
 }
 
 //
@@ -33,8 +31,8 @@ Texture2D<float4> RenderTexture : register(t3);
 #define cmp -
 
 void main(
-    float2 v0: TEXCOORD0,
-    out float4 o0: SV_Target0) {
+    float2 v0 : TEXCOORD0,
+    out float4 o0 : SV_Target0) {
   float4 r0, r1, r2, r3, r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -49,7 +47,10 @@ void main(
   r1.xyzw = SourceTexture.Sample(SourceTextureSampler_s, v0.xy).xyzw;
 
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    o0 = float4(renodx::color::gamma::DecodeSafe(r1.rgb) * RENODX_GRAPHICS_WHITE_NITS / 80.f, 1.f);
+    // Last stop before the swapchain, so guard here, not in 19 passes: vanilla's 8-bit target swallowed negatives and NaN, scRGB does not.
+    o0 = float4(max(0.f, renodx::math::ZeroNaN(renodx::color::gamma::DecodeSafe(r1.rgb)))
+                    * RENODX_GRAPHICS_WHITE_NITS / 80.f,
+                1.f);
     return;
   }
 

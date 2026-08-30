@@ -37,10 +37,10 @@ Texture2D<float4> smpFilmicLUT : register(t6);
 #define cmp -
 
 void main(
-    float4 v0: TEXCOORD0,
-    float2 v1: TEXCOORD1,
-    out float4 o0: SV_Target0,
-    out float o1: SV_Target1) {
+    float4 v0 : TEXCOORD0,
+    float2 v1 : TEXCOORD1,
+    out float4 o0 : SV_Target0,
+    out float o1 : SV_Target1) {
   float4 r0, r1, r2, r3, r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -118,21 +118,26 @@ void main(
   r1.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
   r1.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
   r1.xyz = saturate(r1.xyz);
-  r0.yzw = float3(15, 0.05859375, 0.9375) * r1.xyz;
-  r0.y = floor(r0.y);
-  r1.x = r1.x * 15 + -r0.y;
-  r0.x = r0.y * 0.0625 + r0.z;
-  r0.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r0.xwxw;
-  r1.yzw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.xy).xyz;
-  r0.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.zw).xyz;
-  r0.xyz = r0.xyz + -r1.yzw;
-  r0.xyz = r1.xxx * r0.xyz + r1.yzw;
+  if (CUSTOM_LUT_SAMPLING == 0.f) {
+    r0.yzw = float3(15, 0.05859375, 0.9375) * r1.xyz;
+    r0.y = floor(r0.y);
+    r1.x = r1.x * 15 + -r0.y;
+    r0.x = r0.y * 0.0625 + r0.z;
+    r0.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r0.xwxw;
+    r1.yzw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.xy).xyz;
+    r0.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.zw).xyz;
+    r0.xyz = r0.xyz + -r1.yzw;
+    r0.xyz = r1.xxx * r0.xyz + r1.yzw;
+  } else {
+    r0.xyz = renodx::lut::SampleTetrahedral(ColorGradingLUT, r1.yzx);
+  }
   r0.xyz = GammaOverlayColor.xyz + r0.xyz;
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    r0.xyz = (GammaColorScaleAndInverse.xyz * r0.xyz);
-    r0.xyz = renodx::math::SignPow(r0.xyz, GammaColorScaleAndInverse.w);
-    r0.xyz = renodx::color::gamma::DecodeSafe(r0.xyz);
-    float3 tonemapped = renodx::draw::ToneMapPass(untonemapped, r0.xyz);
+    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
+    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
+    // Undo only what the game's filmic curve compressed; the anchor is that curve at mid grey.
+    float3 tonemapped = MELEToneMapFilmic(untonemapped, r0.xyz, smpFilmicLUT, smpFilmicLUTSampler_s, true,
+                                          MELE_VIGNETTE_TINT_ME2);
     tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {
@@ -141,6 +146,7 @@ void main(
     r0.xyz = log2(r0.xyz);
     r0.xyz = GammaColorScaleAndInverse.www * r0.xyz;
     r0.xyz = exp2(r0.xyz);
+    r0.xyz = MELE_VIGNETTE_TINT_ME2 * r0.xyz;  // Vanilla keeps the tint here; the min() below clips it as the 8-bit target did.
   }
   r1.xy = float2(-0.5, -0.5) + v0.zw;
   r1.xy = float2(0.832050323, 0.554700196) * r1.xy;
@@ -153,13 +159,13 @@ void main(
   r0.w = log2(r0.w);
   r0.w = 200 * r0.w;
   r0.w = exp2(r0.w);
-  r1.xyz = float3(0.0103630004, 5.75000013e-06, 0.163092494) + r0.www;
+  r1.xyz = (float3(0.0103630004, 5.75000013e-06, 0.163092494) + r0.www) / MELE_VIGNETTE_TINT_ME2;
   r1.xyz = lerp(1.f, r1.xyz, CUSTOM_VIGNETTE);
   r0.xyz = r1.xyz * r0.xyz;
   if (RENODX_TONE_MAP_TYPE == 0.f) {
     r0.xyz = min(float3(1, 1, 1), r0.xyz);
   }
-  r0.w = dot(r0.xyz, float3(0.212670997, 0.715160012, 0.0721689984));
+  r0.w = MELEOutputLuma(r0.xyz);
   r0.w = r0.w * 15 + 1;
   r0.w = log2(r0.w);
   o1.x = 0.25 * r0.w;

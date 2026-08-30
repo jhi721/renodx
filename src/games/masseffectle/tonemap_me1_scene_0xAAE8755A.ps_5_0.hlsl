@@ -37,10 +37,10 @@ Texture2D<float4> BlurredImageSeperateBloom : register(t4);
 #define cmp -
 
 void main(
-    float4 v0: TEXCOORD0,
-    float2 v1: TEXCOORD1,
-    out float4 o0: SV_Target0,
-    out float o1: SV_Target1) {
+    float4 v0 : TEXCOORD0,
+    float2 v1 : TEXCOORD1,
+    out float4 o0 : SV_Target0,
+    out float o1 : SV_Target1) {
   float4 r0, r1, r2, r3, r4;
   uint4 bitmask, uiDest;
   float4 fDest;
@@ -140,10 +140,9 @@ void main(
   r0.xyz = r0.xyz + r0.www;
 
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    r0.xyz = (GammaColorScaleAndInverse.xyz * r0.xyz);
-    r0.xyz = renodx::math::SignPow(r0.xyz, GammaColorScaleAndInverse.w);
-    r0.xyz = renodx::color::gamma::DecodeSafe(r0.xyz, 2.2f);
-    float3 tonemapped = renodx::draw::ToneMapPass(untonemapped, r0.xyz);
+    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
+    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
+    float3 tonemapped = MELEToneMapAnalytic(untonemapped, r0.xyz, MELE_MIDGRAY_NATIVE_CURVE);
     tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {
@@ -154,7 +153,7 @@ void main(
     r0.xyz = min(float3(1, 1, 1), r0.xyz);
   }
 
-  r0.w = dot(r0.xyz, float3(0.212670997, 0.715160012, 0.0721689984));
+  r0.w = MELEOutputLuma(r0.xyz);
   r0.w = r0.w * 15 + 1;
   r0.w = log2(r0.w);
   o1.x = 0.25 * r0.w;
