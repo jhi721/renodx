@@ -40,6 +40,8 @@ Texture2D<float4> smpFilmicLUT : register(t7);
 // 3Dmigoto declarations
 #define cmp -
 
+#include "./lut_reconstruct.hlsli"
+
 void main(
     float4 v0 : TEXCOORD0,
     float2 v1 : TEXCOORD1,
@@ -99,9 +101,6 @@ void main(
     r2.xyz = -r3.xyz + r2.xyz;
     r1.xyz = r0.zzz * r2.xyz + r3.xyz;
   }
-  // r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
-  // r1.xyz = exp2(r1.xyz);
-  // r1.xyz = float3(1, 1, 1) + -r1.xyz;
   r0.xyz = BlurredImageSeperateBloom.Sample(BlurredImageSeperateBloomSampler_s, r0.xy).xyz;
   r0.xyz = BloomTintAndScreenBlendThreshold.xyz * r0.xyz;
   r0.w = dot(r1.xyz, float3(0.298999995, 0.587000012, 0.114));
@@ -109,7 +108,8 @@ void main(
   r0.w = exp2(r0.w);
   r0.w = saturate(BloomTintAndScreenBlendThreshold.w * r0.w) * CUSTOM_BLOOM;
 
-  float3 untonemapped = r0.xyz * r0.www + r1.xyz;
+  const float3 scene = r1.xyz;
+  const float3 bloom = r0.xyz * r0.www;
 
   {
     r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
@@ -122,34 +122,18 @@ void main(
   r1.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
   r1.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
   r1.xyz = saturate(r1.xyz);
-  if (CUSTOM_LUT_SAMPLING == 0.f) {
-    r0.yzw = float3(15, 0.05859375, 0.9375) * r1.xyz;
-    r0.y = floor(r0.y);
-    r1.x = r1.x * 15 + -r0.y;
-    r0.x = r0.y * 0.0625 + r0.z;
-    r0.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r0.xwxw;
-    r1.yzw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.xy).xyz;
-    r0.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r0.zw).xyz;
-    r0.xyz = r0.xyz + -r1.yzw;
-    r0.xyz = r1.xxx * r0.xyz + r1.yzw;
-  } else {
-    r0.xyz = renodx::lut::SampleTetrahedral(ColorGradingLUT, r1.yzx);
-  }
-  r0.xyz = GammaOverlayColor.xyz + r0.xyz;
+  r0.xyz = MELEGradeColorLUT(r1.yzx);
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
-    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
-    // Undo only what the game's filmic curve compressed; the anchor is that curve at mid grey.
-    r0.xyz = MELEToneMapFilmic(untonemapped, r0.xyz, smpFilmicLUT, smpFilmicLUTSampler_s, true,
-                                          MELE_VIGNETTE_TINT_ME2);
-    // Scale and Encode later with film grain
+    r0.xyz = MELEToneMapFilmic(r0.xyz, MELEExpWork(scene, bloom), r1.yzx, true, smpFilmicLUT,
+                                        smpFilmicLUTSampler_s, MELE_VIGNETTE_TINT_ME2);
+    // Scaled and encoded after film grain below.
   } else {
     r0.xyz = saturate(GammaColorScaleAndInverse.xyz * r0.xyz);
     r0.xyz = max(float3(9.99999975e-05, 9.99999975e-05, 9.99999975e-05), r0.xyz);
     r0.xyz = log2(r0.xyz);
     r0.xyz = GammaColorScaleAndInverse.www * r0.xyz;
     r0.xyz = exp2(r0.xyz);
-    r0.xyz = MELE_VIGNETTE_TINT_ME2 * r0.xyz;  // Vanilla keeps the tint here; the min() below clips it as the 8-bit target did.
+    r0.xyz = MELE_VIGNETTE_TINT_ME2 * r0.xyz;  // White-point tint, divided back out of the vignette below.
   }
   r1.xy = float2(-0.5, -0.5) + v0.zw;
   r1.xy = float2(0.832050323, 0.554700196) * r1.xy;
@@ -175,7 +159,7 @@ void main(
     }
     r0.xyz *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(r0.rgb, 2.2f);
-    // vignette in gamma
+    // Vignette in gamma.
     r0.xyz = r0.xyz * r1.xyz;
   } else {
     r2.xy = v0.zw * NoiseTextureOffset.xy + NoiseTextureOffset.zw;

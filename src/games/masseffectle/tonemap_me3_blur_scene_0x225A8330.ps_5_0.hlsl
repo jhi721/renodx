@@ -47,6 +47,8 @@ Texture2D<float4> BlurredImageSeperateBloom : register(t4);
 // 3Dmigoto declarations
 #define cmp -
 
+#include "./analytic_reconstruct.hlsli"
+
 void main(
     float4 v0 : TEXCOORD0,
     float2 v1 : TEXCOORD1,
@@ -116,21 +118,12 @@ void main(
 
   float3 untonemapped = r0.xyz;
 
-  r0.xyz = saturate(-SceneShadowsAndDesaturation.xyz + r0.xyz);
-  r0.xyz = SceneInverseHighLights.xyz * r0.xyz;
-  r0.xyz = log2(r0.xyz);
-  r0.xyz = SceneMidTones.xyz * r0.xyz;
-  r0.xyz = exp2(r0.xyz);
-  r0.w = dot(r0.xyz, SceneScaledLuminanceWeights.xyz);
-  r0.xyz = r0.xyz * SceneShadowsAndDesaturation.www + r0.www;
-  r0.xyz = GammaOverlayColor.xyz + r0.xyz;
+  r0.xyz = MELEGradeME3Analytic(r0.xyz);
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
-    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
-    // Vanilla takes this dot in the encoded domain, ahead of its own clamp, so re-encode for it.
-    o0.w = dot(renodx::color::gamma::EncodeSafe(saturate(r0.xyz), 2.2f) * MELE_VIGNETTE_TINT_ME3,
+    // Vanilla alpha luma, taken in the encoded domain before the clamp.
+    o0.w = dot(renodx::color::gamma::EncodeSafe(MELENativeLinear(r0.xyz, GammaColorScaleAndInverse.xyz, false), 2.2f) * MELE_VIGNETTE_TINT_ME3,
                float3(0.298999995, 0.587000012, 0.114));
-    float3 tonemapped = MELEToneMapClipped(untonemapped, r0.xyz, MELE_VIGNETTE_TINT_ME3);
+    float3 tonemapped = MELEToneMapME3Analytic(r0.xyz, untonemapped, MELE_VIGNETTE_TINT_ME3);
     tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {

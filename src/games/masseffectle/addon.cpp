@@ -38,12 +38,10 @@ renodx::utils::settings::Settings settings = renodx::templates::settings::JoinSe
         {"ToneMapType",
          {.binding = &shader_injection.tone_map_type,
           .labels = {"Vanilla", "PsychoV-30"},
-          // Stock parse is `value * 3.f`, sized for the template's three labels; this control has two.
-          .parse = [](float value) { return value; }}},
+          .parse = [](float value) { return value; }}},  // Two labels; the stock parse scales by 3.
         {"ToneMapPeakNits", {.binding = &shader_injection.peak_white_nits, .is_enabled = IsToneMapped}},
         {"ToneMapGameNits", {.binding = &shader_injection.diffuse_white_nits, .is_enabled = IsToneMapped}},
         {"ToneMapUINits", {.binding = &shader_injection.graphics_white_nits, .is_enabled = IsToneMapped}},
-        {"SceneGradeStrength", {.binding = &shader_injection.scene_grade_strength, .is_enabled = IsToneMapped}},
         {"ColorGradeExposure", {.binding = &shader_injection.tone_map_exposure, .is_enabled = IsToneMapped}},
         {"ColorGradeHighlights", {.binding = &shader_injection.tone_map_highlights, .is_enabled = IsToneMapped}},
         {"ColorGradeShadows", {.binding = &shader_injection.tone_map_shadows, .is_enabled = IsToneMapped}},
@@ -52,6 +50,16 @@ renodx::utils::settings::Settings settings = renodx::templates::settings::JoinSe
     }),
 
     {
+        new renodx::utils::settings::Setting{
+            .key = "ColorGradeLUTStrength",
+            .binding = &shader_injection.custom_lut_strength,
+            .default_value = 100.f,
+            .label = "LUT Strength",
+            .section = "Color Grading",
+            .is_enabled = IsToneMapped,
+            .parse = [](float value) { return value * 0.01f; },
+        },
+
         renodx::templates::settings::CreateSetting({
             renodx::templates::settings::VISIBLE_INTERMEDIATE_CONFIG,
             {
@@ -189,7 +197,6 @@ void OnPresetOff() {
       {"ToneMapType", 0.f},
       {"ToneMapGameNits", 203.f},
       {"ToneMapUINits", 203.f},
-      {"SceneGradeStrength", 100.f},
       {"ColorGradeExposure", 1.f},
       {"ColorGradeHighlights", 50.f},
       {"ColorGradeShadows", 50.f},
@@ -198,6 +205,7 @@ void OnPresetOff() {
       {"FxBloom", 50.f},
       {"FxVignette", 50.f},
       {"FXFilmGrain", 50.f},
+      {"ColorGradeLUTStrength", 100.f},
       {"colorGradeLUTSampling", 0.f},
   });
 }
@@ -230,6 +238,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       if (!reshade::register_addon(h_module)) return FALSE;
 
       if (!initialized) {
+        settings.front()->labels = {"Simple", "Advanced"};  // SettingsMode
         renodx::mods::shader::force_pipeline_cloning = true;
         renodx::mods::shader::expected_constant_buffer_space = 50;
         renodx::mods::shader::expected_constant_buffer_index = 13;

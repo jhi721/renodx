@@ -52,6 +52,8 @@ Texture2D<float4> smpFilmicLUT : register(t8);
 // 3Dmigoto declarations
 #define cmp -
 
+#include "./lut_reconstruct.hlsli"
+
 void main(
     float4 v0 : TEXCOORD0,
     float2 v1 : TEXCOORD1,
@@ -188,27 +190,11 @@ void main(
   r0.x = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.xx).x;
   r0.y = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.yy).x;
   r0.z = smpFilmicLUT.Sample(smpFilmicLUTSampler_s, r0.zz).x;
-  if (CUSTOM_LUT_SAMPLING == 0.f) {
-    r0.xw = float2(0.05859375, 15) * r0.xz;
-    r0.w = floor(r0.w);
-    r0.z = r0.z * 15 + -r0.w;
-    r1.x = r0.w * 0.0625 + r0.x;
-    r1.y = 0.9375 * r0.y;
-    r1.xyzw = float4(0.001953125, 0.03125, 0.064453125, 0.03125) + r1.xyxy;
-    r0.xyw = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.xy).xyz;
-    r1.xyz = ColorGradingLUT.Sample(ColorGradingLUTSampler_s, r1.zw).xyz;
-    r1.xyz = r1.xyz + -r0.xyw;
-    r0.xyz = r0.zzz * r1.xyz + r0.xyw;
-  } else {
-    r0.xyz = renodx::lut::SampleTetrahedral(ColorGradingLUT, r0.xyz);
-  }
-  r0.xyz = GammaOverlayColor.xyz + r0.xyz;
+  const float3 filmic = r0.xyz;
+  r0.xyz = MELEGradeColorLUT(filmic);
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
-    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
-    // Undo only what the game's filmic curve compressed; the anchor is that curve at mid grey.
-    float3 tonemapped = MELEToneMapFilmic(untonemapped, r0.xyz, smpFilmicLUT, smpFilmicLUTSampler_s, false,
-                                          MELE_VIGNETTE_TINT_ME3);
+    float3 tonemapped = MELEToneMapFilmic(r0.xyz, untonemapped, filmic, false, smpFilmicLUT,
+                                        smpFilmicLUTSampler_s, MELE_VIGNETTE_TINT_ME3);
     tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {
@@ -217,7 +203,7 @@ void main(
     r0.xyz = log2(r0.xyz);
     r0.xyz = GammaColorScaleAndInverse.www * r0.xyz;
     r0.xyz = exp2(r0.xyz);
-    r0.xyz = MELE_VIGNETTE_TINT_ME3 * r0.xyz;  // Vanilla keeps the tint here; the min() below clips it as the 8-bit target did.
+    r0.xyz = MELE_VIGNETTE_TINT_ME3 * r0.xyz;  // White-point tint, divided back out of the vignette below.
   }
   r1.xy = v0.zw * ScreenUVScaleBias.xy + ScreenUVScaleBias.zw;
   r1.xy = float2(-0.5, -0.5) + r1.xy;

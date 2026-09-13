@@ -36,6 +36,8 @@ Texture2D<float4> BlurredImageSeperateBloom : register(t4);
 // 3Dmigoto declarations
 #define cmp -
 
+#include "./analytic_reconstruct.hlsli"
+
 void main(
     float4 v0 : TEXCOORD0,
     float2 v1 : TEXCOORD1,
@@ -96,9 +98,6 @@ void main(
     r1.xyz = r0.zzz * r2.xyz + r3.xyz;
   }
 
-  // r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
-  // r1.xyz = exp2(r1.xyz);
-  // r1.xyz = float3(1, 1, 1) + -r1.xyz;
   r0.xyz = BlurredImageSeperateBloom.Sample(BlurredImageSeperateBloomSampler_s, r0.xy).xyz;
   r0.xyz = BloomTintAndScreenBlendThreshold.xyz * r0.xyz;
   r0.w = dot(r1.xyz, float3(0.298999995, 0.587000012, 0.114));
@@ -106,7 +105,8 @@ void main(
   r0.w = exp2(r0.w);
   r0.w = saturate(BloomTintAndScreenBlendThreshold.w * r0.w) * CUSTOM_BLOOM;
 
-  float3 untonemapped = r0.xyz * r0.www + r1.xyz;
+  const float3 scene = r1.xyz;
+  const float3 bloom = r0.xyz * r0.www;
 
   {
     r1.xyz = float3(-1.70000005, -1.70000005, -1.70000005) * r1.xyz;
@@ -140,9 +140,7 @@ void main(
   r0.xyz = r0.xyz + r0.www;
 
   if (RENODX_TONE_MAP_TYPE != 0.f) {
-    // Encoding by the game's gamma and decoding by 2.2 cancel only when they match; dropping both cancels exactly.
-    r0.xyz = GammaColorScaleAndInverse.xyz * r0.xyz;
-    float3 tonemapped = MELEToneMapAnalytic(untonemapped, r0.xyz, MELE_MIDGRAY_NATIVE_CURVE);
+    float3 tonemapped = MELEToneMapAnalytic(r0.xyz, scene, bloom, 1.f);
     tonemapped *= RENODX_DIFFUSE_WHITE_NITS / RENODX_GRAPHICS_WHITE_NITS;
     r0.xyz = renodx::color::gamma::EncodeSafe(tonemapped, 2.2f);
   } else {

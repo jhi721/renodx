@@ -2,21 +2,21 @@
 #define SRC_GAMES_MASSEFFECTLE_SHARED_H_
 
 struct ShaderInjectData {
-  float peak_white_nits;
-  float diffuse_white_nits;
-  float graphics_white_nits;
-  float scene_grade_strength;
-  float tone_map_type;
-  float tone_map_exposure;
-  float tone_map_highlights;
-  float tone_map_shadows;
-  float tone_map_contrast;
-  float tone_map_saturation;
-  float custom_bloom;
-  float custom_vignette;
-  float custom_film_grain;
-  float custom_lut_sampling;
-  float custom_random;
+  float peak_white_nits;      // display peak nits; defaults to the swapchain's reported peak
+  float diffuse_white_nits;   // game brightness nits
+  float graphics_white_nits;  // UI brightness nits
+  float tone_map_type;        // 0 = Vanilla, 1 = PsychoV-30
+  float tone_map_exposure;    // PsychoV exposure scale (1.0 = neutral)
+  float tone_map_highlights;  // 1.0 = neutral
+  float tone_map_shadows;     // 1.0 = neutral
+  float tone_map_contrast;    // 1.0 = neutral
+  float tone_map_saturation;  // PsychoV purity scale (1.0 = neutral)
+  float custom_bloom;         // bloom blend weight scale (1.0 = vanilla)
+  float custom_vignette;      // vignette strength (1.0 = vanilla, 0 = off)
+  float custom_film_grain;    // film grain strength (0 = off)
+  float custom_lut_sampling;  // 0 = Trilinear (vanilla), 1 = Tetrahedral
+  float custom_lut_strength;  // 0 = LUT off, 1.0 = vanilla
+  float custom_random;        // per-frame random seed for film grain
 };
 
 #ifndef __cplusplus
@@ -38,10 +38,10 @@ cbuffer shader_injection : register(b13) {
 #define RENODX_TONE_MAP_SHADOWS     shader_injection.tone_map_shadows
 #define RENODX_TONE_MAP_CONTRAST    shader_injection.tone_map_contrast
 #define RENODX_TONE_MAP_SATURATION  shader_injection.tone_map_saturation
-#define RENODX_COLOR_GRADE_STRENGTH shader_injection.scene_grade_strength
 #define CUSTOM_BLOOM                (RENODX_TONE_MAP_TYPE == 0.f ? 1.f : shader_injection.custom_bloom)
 #define CUSTOM_VIGNETTE             (RENODX_TONE_MAP_TYPE == 0.f ? 1.f : shader_injection.custom_vignette)
 #define CUSTOM_LUT_SAMPLING         (RENODX_TONE_MAP_TYPE == 0.f ? 0.f : shader_injection.custom_lut_sampling)
+#define CUSTOM_LUT_STRENGTH         (RENODX_TONE_MAP_TYPE == 0.f ? 1.f : shader_injection.custom_lut_strength)
 #define CUSTOM_FILM_GRAIN           shader_injection.custom_film_grain
 #define CUSTOM_RANDOM               shader_injection.custom_random
 
@@ -51,23 +51,31 @@ cbuffer shader_injection : register(b13) {
 
 static const float MELE_MIDGRAY_SCENE = 0.18f;
 
+// Native per-channel tone curve of the ME1/ME2 exponential permutations.
 float MELENativeCurve(float color) {
+  return 1.f - exp2(-1.70000005f * color);
+}
+
+float3 MELENativeCurve(float3 color) {
   return 1.f - exp2(-1.70000005f * color);
 }
 
 static const float MELE_MIDGRAY_NATIVE_CURVE = MELENativeCurve(MELE_MIDGRAY_SCENE);
 
-// ImageAdjustments mixes neutral mid grey to this fraction of the curve value before the LUT; luminance only, since a chromatic anchor would adapt away the tint the game applies on purpose.
-static const float MELE_MIDGRAY_ANCHOR_SCALE = 0.81756f;
+// The native curve's derivative at scene mid grey: a * ln2 * 2^(-a * p) = a * ln2 * (1 - F(p)).
+static const float MELE_EXP_SLOPE = 1.70000005f * 0.693147181f * (1.f - MELE_MIDGRAY_NATIVE_CURVE);
+
+// PsychoV anchor of the exponential families: ImageAdjustments maps neutral mid grey to 0.81756 of the curve value.
+static const float MELE_EXP_ANCHOR = MELE_MIDGRAY_NATIVE_CURVE * 0.81756f;
 
 // The game's filmic LUT is addressed through this scale; its domain covers scene linear to about 16.2.
 static const float MELE_FILMIC_LUT_SCALE = 0.0616082214f;
 
-float MELEFilmicCoord(float scene, bool has_precurve) {
-  return MELE_FILMIC_LUT_SCALE * (has_precurve ? MELENativeCurve(scene) : scene);
+float MELEFilmicLookup(Texture2D<float4> filmic_lut, SamplerState filmic_sampler, float z) {
+  return filmic_lut.SampleLevel(filmic_sampler, float2(MELE_FILMIC_LUT_SCALE * z, 0.5f), 0).x;
 }
 
-// Feeds SV_Target1, which CMAA reads as its luma: clamp like vanilla's 8-bit target and cancel the nits transport, or Game/UI Brightness moves edge detection. No-op in Vanilla.
+// SV_Target1 luma for CMAA: clamped like vanilla's 8-bit target, with the UI brightness transport divided out.
 float MELEOutputLuma(float3 encoded_output) {
   const float transport = (RENODX_TONE_MAP_TYPE == 0.f)
                               ? 1.f
@@ -75,11 +83,10 @@ float MELEOutputLuma(float3 encoded_output) {
   return dot(saturate(encoded_output * transport), float3(0.212670997f, 0.715160012f, 0.0721689984f));
 }
 
-float3 CustomToneMapPass(float3 untonemapped, float3 graded_sdr_color, float expand, float anchor,
-                         float3 vignette_tint) {
+// PsychoV-30 display map. hdr is linear BT.709 relative to game brightness; vignette_tint is the game's encoded white-point tint.
+float3 CustomToneMapPass(float3 hdr, float anchor, float3 vignette_tint) {
   return renodx_custom::tonemap::psycho30::psychotm_test30(
-      lerp(untonemapped, graded_sdr_color * expand, RENODX_COLOR_GRADE_STRENGTH)
-          * renodx::math::SignPow(vignette_tint, 2.2f),
+      hdr * renodx::math::SignPow(vignette_tint, 2.2f),
       RENODX_PEAK_WHITE_NITS / RENODX_DIFFUSE_WHITE_NITS,
       RENODX_TONE_MAP_EXPOSURE,
       RENODX_TONE_MAP_HIGHLIGHTS,
@@ -93,51 +100,93 @@ float3 CustomToneMapPass(float3 untonemapped, float3 graded_sdr_color, float exp
       anchor.xxx, anchor.xxx);  // anchors; the four trailing arguments keep their defaults
 }
 
+// Encoded white-point tint of each game's vignette.
 static const float3 MELE_VIGNETTE_TINT_ME1 = float3(1.0103630004f, 1.00000575f, 1.0130924946f);
 static const float3 MELE_VIGNETTE_TINT_ME2 = float3(1.0103630004f, 1.00000575f, 1.163092494f);
 static const float3 MELE_VIGNETTE_TINT_ME3 = float3(1.01036298f, 1.00000572f, 1.16309249f);
 
-// Exact inverse of the curve vanilla applied, normalised so 0.18 scene grey stays put.
-float3 MELEToneMapAnalytic(float3 untonemapped, float3 graded_sdr_color, float mid_gray,
-                           float3 vignette_tint = 1.f) {
-  const float mch = renodx::math::Max(untonemapped);
-  return CustomToneMapPass(
-      untonemapped, graded_sdr_color,
-      max(1.f, renodx::math::DivideSafe(mch * (mid_gray / MELE_MIDGRAY_SCENE), MELENativeCurve(mch))),
-      mid_gray * MELE_MIDGRAY_ANCHOR_SCALE, vignette_tint);
+// HDR reconstruction ahead of PsychoV, one model per colour family: MELEToneMapME12 (ME1/ME2 exponential curve + colour
+// LUT), MELEToneMapAnalytic (ME1/ME2 exponential curve + analytic grade), MELEToneMapFilmic (filmic + colour LUT) and
+// MELEToneMapME3Analytic (ME3 analytic hard clip). All but the hard clip keep the native SDR grade's RGB ratios at the
+// working luminance; the hard clip takes only hue from it. Invalid input keeps the native result for the whole triple,
+// and a working value that failed is carried as -1.
+
+// True when no channel is Inf or NaN, read from the exponent bits.
+bool MELEIsFinite(float3 v) {
+  return all((asuint(v) & 0x7F800000) != 0x7F800000);
 }
 
-// ME3's analytic scene pass carries no tone curve, only the clip its grade opens with, so mid grey is identity and the reconstruction is that clip's plain inverse.
-float3 MELEToneMapClipped(float3 untonemapped, float3 graded_sdr_color, float3 vignette_tint = 1.f) {
-  return CustomToneMapPass(untonemapped, graded_sdr_color, max(1.f, renodx::math::Max(untonemapped)),
-                           MELE_MIDGRAY_SCENE, vignette_tint);
+bool MELEIsFiniteNonNegative(float3 v) {
+  return MELEIsFinite(v) && all(v >= 0.f);
 }
 
-float3 MELEToneMapFilmic(float3 untonemapped, float3 graded_sdr_color,
-                         Texture2D<float4> filmic_lut, SamplerState filmic_sampler, bool has_precurve,
-                         float3 vignette_tint = 1.f) {
-  const float mch = max(renodx::math::Max(untonemapped), 1e-6f);
+// Bounded native SDR in linear. The game's gamma and the 2.2 decode are both omitted, so the transfer is the scale alone.
+float3 MELENativeLinear(float3 graded, float3 scale, bool black_floor) {
+  const float3 color = saturate(scale * graded);
+  return black_floor ? max(9.99999975e-05f, color) : color;
+}
 
-  const float u_mid = MELEFilmicCoord(MELE_MIDGRAY_SCENE, has_precurve);
-  const float u_lo = MELEFilmicCoord(0.16f, has_precurve);
-  const float u_hi = MELEFilmicCoord(0.20f, has_precurve);
-  const float u_mch = MELEFilmicCoord(mch, has_precurve);
-  // Sample the last texel centre, not u = 1, so the game's sampler addressing cannot affect the read.
-  const float u_top = min(4095.5f / 4096.f, MELEFilmicCoord(1e4f, has_precurve));
+// ME1/ME2 highlight desaturation and ImageAdjustments, in RGB and unclamped.
+float3 MELEImageAdjustME12(float3 color) {
+  float4 r0, r1, r2;
+  r0.xyz = color;
+  r1.xyz = float3(0.98082906, 0.980000436, 0.993047416) * r0.xyz;
+  r0.w = (1.10000002 < dot(r0.xyz, float3(0.333000004, 0.333000004, 0.333000004))) ? 1 : 0;
+  r2.x = dot(r1.xyz, float3(0.300000012, 0.589999974, 0.109999999));
+  r2.xyz = -r0.xyz * float3(0.98082906, 0.980000436, 0.993047416) + r2.xxx;
+  r1.xyz = r2.xyz * float3(0.5, 0.5, 0.5) + r1.xyz;
+  r0.xyz = r0.w * r1.xyz + (1 - r0.w) * r0.xyz;
+  r0.w = dot(r0.xyz, float3(0.300000012, 0.589999974, 0.109999999));
+  r1.xyz = float3(0.400000006, 0.400000006, 0.400000006) * r0.xyz;
+  r1.xyz = r0.www * float3(0.600000024, 0.600000024, 0.600000024) + r1.xyz;
+  r1.xyz = r1.xyz * float3(0.00658500008, 0.0199180003, 1) + -r0.xyz;
+  return r1.xyz * float3(0.200000003, 0.200000003, 0.200000003) + r0.xyz;
+}
 
-  const float y_mid = filmic_lut.SampleLevel(filmic_sampler, float2(u_mid, 0.5f), 0).x;
-  const float g_lo = filmic_lut.SampleLevel(filmic_sampler, float2(u_lo, 0.5f), 0).x;
-  const float g_hi = filmic_lut.SampleLevel(filmic_sampler, float2(u_hi, 0.5f), 0).x;
-  const float g_mch = filmic_lut.SampleLevel(filmic_sampler, float2(u_mch, 0.5f), 0).x;
-  const float g_top = filmic_lut.SampleLevel(filmic_sampler, float2(u_top, 0.5f), 0).x;
+// Working value of the exponential families: the native curve up to scene mid grey and its tangent beyond, per channel,
+// plus bloom after the curve as vanilla adds it. -1 when scene or bloom alone is negative or non-finite.
+float3 MELEExpWork(float3 scene, float3 bloom) {
+  const float3 continued = scene <= MELE_MIDGRAY_SCENE
+                               ? MELENativeCurve(scene)
+                               : MELE_MIDGRAY_NATIVE_CURVE + MELE_EXP_SLOPE * (scene - MELE_MIDGRAY_SCENE);
+  return (MELEIsFiniteNonNegative(scene) && MELEIsFiniteNonNegative(bloom)) ? continued + bloom : -1.f;
+}
 
-  const float tm_tan = y_mid + ((g_hi - g_lo) / 0.04f) * (mch - MELE_MIDGRAY_SCENE);
+// Max-channel scale q for all three channels: identity up to 0.75, a C1 Reinhard shoulder asymptotic to 1 above it.
+// Divide the graded result by q to undo it.
+bool MELETryGradeProxy(float3 work, out float q, out float3 proxy) {
+  const float k = 0.75f;
+  const float m = renodx::math::Max(work);
+  q = m <= k ? 1.f : (k + renodx::tonemap::Reinhard(m - k, 1.f - k)) / m;
+  proxy = work * q;
+  return MELEIsFiniteNonNegative(work);
+}
 
-  const float progress = saturate((g_mch - y_mid) / max(g_top - y_mid, 1e-4f));
-  const float tm = lerp(g_mch, tm_tan, progress * progress);
+// native_linear's RGB ratios at target_y. A black target or reference gives black; invalid input returns native_linear.
+float3 MELENativeColorAtLuminance(float3 native_linear, float target_y) {
+  const float native_y = renodx::color::y::from::BT709(native_linear);
+  const float3 result = native_linear * (target_y / native_y);
+  if (!MELEIsFiniteNonNegative(native_linear) || !MELEIsFiniteNonNegative(target_y)) return native_linear;
+  if (target_y == 0.f || all(native_linear == 0.f)) return 0.f;
+  if (native_y < 1e-6f || !MELEIsFiniteNonNegative(result)) return native_linear;
+  return result;
+}
 
-  // tm + 0.1 is the closed form of tm / ReinhardPiecewise(tm, 1, 0.9): shoulder exposure is 1 / (1 - 0.9) = 10, and max() replaces its seam test at 0.9.
-  return CustomToneMapPass(untonemapped, graded_sdr_color, max(1.f, tm + 0.1f), y_mid, vignette_tint);
+// Continues the bound filmic LUT past its mid-grey node along the secant of its 0.16 / 0.20 probes, per channel, in the
+// LUT's input domain z (after the exponential curve when has_precurve). Below the node the native sample stays; -1 when
+// z, native or the probe window is invalid.
+float3 MELEFilmicExtended(Texture2D<float4> filmic_lut, SamplerState filmic_sampler, float3 z, float3 native,
+                          bool has_precurve) {
+  const float z_lo = has_precurve ? MELENativeCurve(0.16f) : 0.16f;
+  const float z_mid = has_precurve ? MELE_MIDGRAY_NATIVE_CURVE : MELE_MIDGRAY_SCENE;
+  const float z_hi = has_precurve ? MELENativeCurve(0.20f) : 0.20f;
+  const float y_lo = MELEFilmicLookup(filmic_lut, filmic_sampler, z_lo);
+  const float y_mid = MELEFilmicLookup(filmic_lut, filmic_sampler, z_mid);
+  const float y_hi = MELEFilmicLookup(filmic_lut, filmic_sampler, z_hi);
+  const float slope = (y_hi - y_lo) / (z_hi - z_lo);
+  const bool valid = MELEIsFiniteNonNegative(z) && MELEIsFiniteNonNegative(native) && y_lo <= y_mid && y_mid <= y_hi
+                     && slope > (has_precurve ? 0.f : 1e-5f);
+  return valid ? (z > z_mid ? y_mid + slope * (z - z_mid) : native) : -1.f;
 }
 
 #endif
