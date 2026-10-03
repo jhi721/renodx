@@ -201,11 +201,11 @@ float4 main(
   float4 _127 = t16.Sample(s2_space1, float2(TEXCOORD.x, TEXCOORD.y));
   float4 _129 = t16.Sample(s2_space1, float2(_64, _71));
   float4 _131 = t16.Sample(s2_space1, float2(_77, _83));
-  float4 _133 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y));
+  float4 _133 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y)) * CUSTOM_LENS_DIRT;
   bool _139 = (cb0_005w == 0);
-  float _141 = (cb0_000y * CUSTOM_LENS_DIRT) * _133.x;
-  float _142 = (cb0_000y * CUSTOM_LENS_DIRT) * _133.y;
-  float _143 = (cb0_000y * CUSTOM_LENS_DIRT) * _133.z;
+  float _141 = cb0_000y * _133.x;
+  float _142 = cb0_000y * _133.y;
+  float _143 = cb0_000y * _133.z;
   if (_139) {
     float _145 = _141 + 1.0f;
     float _146 = _142 + 1.0f;

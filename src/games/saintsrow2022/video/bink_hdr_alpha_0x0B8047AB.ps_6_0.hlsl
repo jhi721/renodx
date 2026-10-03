@@ -1,7 +1,7 @@
 #include "../tonemap/tonemap.hlsli"
 
 // rl_default_primitive_bink_hdr_alpha: HDR10 Bink video (PQ decode -> AP1) tone mapped with the vanilla ACES chain (t40/t13, space15).
-// The RenoDX path replaces the sRGB-encoded result before the vanilla tint, alpha and discard.
+// The RenoDX path replaces the sRGB-encoded result after the discard, before the vanilla tint and alpha.
 
 Texture3D<float4> t40_space15 : register(t40, space15);
 

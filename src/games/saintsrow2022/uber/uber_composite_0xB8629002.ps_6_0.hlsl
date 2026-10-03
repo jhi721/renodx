@@ -329,11 +329,11 @@ float4 main(
   float _278 = max(_275, 0.0f);
   float _279 = max(_244, 0.0f);
   float4 _280 = t16.Sample(s2_space1, float2(TEXCOORD.x, TEXCOORD.y));
-  float4 _284 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y));
+  float4 _284 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y)) * CUSTOM_LENS_DIRT;
   bool _290 = (cb0_005w == 0);
-  float _292 = (cb0_000y * CUSTOM_LENS_DIRT) * _284.x;
-  float _293 = (cb0_000y * CUSTOM_LENS_DIRT) * _284.y;
-  float _294 = (cb0_000y * CUSTOM_LENS_DIRT) * _284.z;
+  float _292 = cb0_000y * _284.x;
+  float _293 = cb0_000y * _284.y;
+  float _294 = cb0_000y * _284.z;
   if (_290) {
     float _296 = _292 + 1.0f;
     float _297 = _293 + 1.0f;

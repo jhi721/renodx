@@ -4,7 +4,6 @@
 #include "../common.hlsli"
 #include "./customtest31.hlsli"
 
-// From Pragmata / Onimusha OCIO.hlsli.
 namespace renodx_custom {
 namespace tonemap {
 namespace aces {
@@ -86,18 +85,12 @@ float3 ApplyPsychoVToneMap(float3 untonemapped_ap1, float peak_ratio, int target
 float3 ApplySaintsRowToneMap(float3 stops) {
   float3 untonemapped_ap1 = exp2(stops - 9.72f);
 
-  // SDR output: peak = game white = 203 nits in BT.709 (Onimusha/Pragmata); the nits sliders are hidden there.
-  float peak_nits = RENODX_PEAK_WHITE_NITS;
-  float diffuse_white_nits = RENODX_DIFFUSE_WHITE_NITS;
-  int target_gamut = renodx::tonemap::psychov::CUSTOM_PSYCHO31_TARGET_GAMUT_BT2020;
-  if (!GAME_HDR_OUTPUT) {
-    peak_nits = 203.f;
-    diffuse_white_nits = 203.f;
-    target_gamut = renodx::tonemap::psychov::CUSTOM_PSYCHO31_TARGET_GAMUT_BT709;
-  }
-
   [branch] if (RENODX_TONE_MAP_TYPE == 1.f) {
-    return ApplyPsychoVToneMap(untonemapped_ap1, peak_nits / diffuse_white_nits, target_gamut);
+    return ApplyPsychoVToneMap(
+        untonemapped_ap1,
+        RENODX_PEAK_WHITE_NITS / RENODX_DIFFUSE_WHITE_NITS,
+        GAME_HDR_OUTPUT ? renodx::tonemap::psychov::CUSTOM_PSYCHO31_TARGET_GAMUT_BT2020
+                        : renodx::tonemap::psychov::CUSTOM_PSYCHO31_TARGET_GAMUT_BT709);
   }
 
   // RenoDX (Vanilla+)
@@ -108,16 +101,14 @@ float3 ApplySaintsRowToneMap(float3 stops) {
                                 RENODX_TONE_MAP_SATURATION, RENODX_TONE_MAP_HIGHLIGHT_SATURATION, RENODX_TONE_MAP_DECHROMA, 0.18f, 0.18f,
                                 renodx::tonemap::psychov::PSYCHO30_SOURCE_BOUNDARY_AP1)));
 
-  float aces_min = 0.0001f / diffuse_white_nits;
-  float aces_max = peak_nits / diffuse_white_nits;
+  float aces_min = 0.0001f / RENODX_DIFFUSE_WHITE_NITS;
+  float aces_max = RENODX_PEAK_WHITE_NITS / RENODX_DIFFUSE_WHITE_NITS;
   // Literal mids and exp-shift references per mode, so the reference curve folds at compile time.
-  if (RENODX_GAMMA_CORRECTION != 0.f) {  // Matches SDR
-    // 2.2 EOTF emulation follows (RenderIntermediatePass in HDR, sRGB encode on a 2.2 display in SDR); pre-correct
-    // so min/peak still land on target.
+  [branch] if (RENODX_GAMMA_CORRECTION != 0.f) {  // Matches SDR
+    // RenderIntermediatePass applies the 2.2 EOTF emulation next; pre-correct so min/peak still land on target.
     aces_max = renodx::color::correct::Gamma(aces_max, true);
     aces_min = renodx::color::correct::Gamma(aces_min, true);
-    // Onimusha's SDR constants; they match the ACES 1.0 48-nit ODT on 2.2 within ~1% from -3 to +1 stops
-    // (see NOTES.md).
+    // SDR constants; they match the ACES 1.0 48-nit ODT on 2.2 within ~1% from -3 to +1 stops (see NOTES.md).
     const float ACES_MID = 8.f;
     const float ACES_DIFFUSE = ACES_MID / MID_GRAY_OUT;
     float3 tonemapped_ap1 = renodx::tonemap::aces::ODTToneMap(
@@ -139,14 +130,9 @@ float3 ApplySaintsRowToneMap(float3 stops) {
 }
 
 // RenoDX path of the uber composite, material and HDR Bink video: applies the vanilla per-channel scale and returns
-// the intermediate encoding (HDR) or display code values (SDR).
+// the intermediate encoding, which in SDR are the swap chain's code values (see the SDR overrides in shared.h).
 float3 ApplySaintsRowScene(float3 stops, float3 tint) {
-  float3 color = ApplySaintsRowToneMap(stops) * tint;
-  if (GAME_HDR_OUTPUT) return renodx::draw::RenderIntermediatePass(color);
-  // SDR writes the swap chain's r8g8b8a8_unorm code values for a 2.2 display. Matches SDR bakes the vanilla sRGB
-  // encode (its HDR path emulates exactly that on 2.2); the other modes are already display-referred for 2.2.
-  return renodx::draw::EncodeColor(
-      max(0.f, color), RENODX_GAMMA_CORRECTION != 0.f ? renodx::draw::ENCODING_SRGB : renodx::draw::ENCODING_GAMMA_2_2);
+  return renodx::draw::RenderIntermediatePass(ApplySaintsRowToneMap(stops) * tint);
 }
 
 // Measurement overlay (see NOTES.md); keep 0 for release builds.

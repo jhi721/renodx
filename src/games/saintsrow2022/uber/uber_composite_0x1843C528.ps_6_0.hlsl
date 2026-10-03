@@ -131,11 +131,11 @@ float4 main(
   float _55 = max(_52, 0.0f);
   float _56 = max(_17.w, 0.0f);
   float4 _57 = t16.Sample(s2_space1, float2(TEXCOORD.x, TEXCOORD.y));
-  float4 _61 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y));
+  float4 _61 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y)) * CUSTOM_LENS_DIRT;
   bool _67 = (cb0_005w == 0);
-  float _69 = (cb0_000y * CUSTOM_LENS_DIRT) * _61.x;
-  float _70 = (cb0_000y * CUSTOM_LENS_DIRT) * _61.y;
-  float _71 = (cb0_000y * CUSTOM_LENS_DIRT) * _61.z;
+  float _69 = cb0_000y * _61.x;
+  float _70 = cb0_000y * _61.y;
+  float _71 = cb0_000y * _61.z;
   if (_67) {
     float _73 = _69 + 1.0f;
     float _74 = _70 + 1.0f;

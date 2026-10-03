@@ -353,8 +353,7 @@ void OnPresent(
     const reshade::api::rect*,
     uint32_t,
     const reshade::api::rect*) {
-  shader_injection.game_hdr_output = hdr_output_drawn ? 1.f : 0.f;
-  hdr_output_drawn = false;
+  shader_injection.game_hdr_output = std::exchange(hdr_output_drawn, false) ? 1.f : 0.f;
 }
 
 bool initialized = false;

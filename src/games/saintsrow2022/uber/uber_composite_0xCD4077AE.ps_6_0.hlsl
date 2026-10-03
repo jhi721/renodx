@@ -391,11 +391,11 @@ float4 main(
   float4 _342 = t16.Sample(s2_space1, float2(_125, _126));
   float4 _344 = t16.Sample(s2_space1, float2(_279, _286));
   float4 _346 = t16.Sample(s2_space1, float2(_292, _298));
-  float4 _348 = t19.Sample(s0_space1, float2(_125, _126));
+  float4 _348 = t19.Sample(s0_space1, float2(_125, _126)) * CUSTOM_LENS_DIRT;
   bool _354 = (cb0_005w == 0);
-  float _356 = (cb0_000y * CUSTOM_LENS_DIRT) * _348.x;
-  float _357 = (cb0_000y * CUSTOM_LENS_DIRT) * _348.y;
-  float _358 = (cb0_000y * CUSTOM_LENS_DIRT) * _348.z;
+  float _356 = cb0_000y * _348.x;
+  float _357 = cb0_000y * _348.y;
+  float _358 = cb0_000y * _348.z;
   if (_354) {
     float _360 = _356 + 1.0f;
     float _361 = _357 + 1.0f;

@@ -33,11 +33,12 @@ cbuffer shader_injection : register(b13, space50) {
   ShaderInjectData shader_injection : packoffset(c0);
 }
 
-#define RENODX_TONE_MAP_TYPE       shader_injection.tone_map_type
-#define RENODX_PEAK_WHITE_NITS     shader_injection.peak_white_nits
-#define RENODX_DIFFUSE_WHITE_NITS  shader_injection.diffuse_white_nits
-#define RENODX_GRAPHICS_WHITE_NITS shader_injection.graphics_white_nits
-#define GAME_HDR_OUTPUT            (shader_injection.game_hdr_output != 0.f)
+#define RENODX_TONE_MAP_TYPE shader_injection.tone_map_type
+#define GAME_HDR_OUTPUT      (shader_injection.game_hdr_output != 0.f)
+// SDR output (the nits sliders are hidden): peak = game white = 203 nits, unscaled intermediate.
+#define RENODX_PEAK_WHITE_NITS     (GAME_HDR_OUTPUT ? shader_injection.peak_white_nits : 203.f)
+#define RENODX_DIFFUSE_WHITE_NITS  (GAME_HDR_OUTPUT ? shader_injection.diffuse_white_nits : 203.f)
+#define RENODX_GRAPHICS_WHITE_NITS (GAME_HDR_OUTPUT ? shader_injection.graphics_white_nits : 203.f)
 #define UI_EOTF_EMULATION          shader_injection.ui_eotf_emulation
 #define SR_TONE_MAP_ACTIVE         (RENODX_TONE_MAP_TYPE != 0.f)
 
@@ -61,11 +62,12 @@ cbuffer shader_injection : register(b13, space50) {
 // RenoDX (Vanilla+, Matches SDR) only.
 #define RENODX_GAMMA_CORRECTION float(RENODX_TONE_MAP_TYPE == 3.f)
 // UI emulation: encode the scene in 2.2 (round-trips unchanged) so the game's sRGB-encoded UI is decoded as 2.2.
-// 1 = sRGB, 2 = gamma 2.2 (renodx::draw ENCODING_*).
+// SDR writes the swap chain's code values for a 2.2 display; Matches SDR's 2.2 correction then yields the vanilla
+// sRGB encode. 1 = sRGB, 2 = gamma 2.2 (renodx::draw ENCODING_*).
 #define RENODX_INTERMEDIATE_ENCODING \
-  ((RENODX_GAMMA_CORRECTION != 0.f || UI_EOTF_EMULATION != 0.f) ? 2.f : 1.f)
+  ((!GAME_HDR_OUTPUT || RENODX_GAMMA_CORRECTION != 0.f || UI_EOTF_EMULATION != 0.f) ? 2.f : 1.f)
 
-// Wide gamut like the PQ path of other PsychoV-31 mods: keep BT.2020, drop what lies outside it.
+// Wide gamut: keep BT.2020, drop what lies outside it.
 #define RENODX_SWAP_CHAIN_CLAMP_COLOR_SPACE color::convert::COLOR_SPACE_BT2020
 // SwapChainPass clamps the max channel after converting to BT.709 (scRGB), which would dim peak BT.2020
 // colours; the tone mappers already bound the scene and UI stays at UI nits.

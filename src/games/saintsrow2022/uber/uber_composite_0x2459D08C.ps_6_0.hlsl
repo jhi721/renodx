@@ -197,11 +197,11 @@ float4 main(
   float4 _126 = t16.Sample(s2_space1, float2(TEXCOORD.x, TEXCOORD.y));
   float4 _128 = t16.Sample(s2_space1, float2(_63, _70));
   float4 _130 = t16.Sample(s2_space1, float2(_76, _82));
-  float4 _132 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y));
+  float4 _132 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y)) * CUSTOM_LENS_DIRT;
   bool _138 = (cb0_005w == 0);
-  float _140 = (cb0_000y * CUSTOM_LENS_DIRT) * _132.x;
-  float _141 = (cb0_000y * CUSTOM_LENS_DIRT) * _132.y;
-  float _142 = (cb0_000y * CUSTOM_LENS_DIRT) * _132.z;
+  float _140 = cb0_000y * _132.x;
+  float _141 = cb0_000y * _132.y;
+  float _142 = cb0_000y * _132.z;
   if (_138) {
     float _144 = _140 + 1.0f;
     float _145 = _141 + 1.0f;
