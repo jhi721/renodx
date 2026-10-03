@@ -47,12 +47,12 @@ static const float MID_GRAY_OUT = 0.1f;
 
 // RenoDX (Enhanced): PsychoV-31 on pre-RRT AP1, matched to the SDR path (ACES 1.0 RRT + 48-nit ODT, dim surround)
 // shown on a gamma 2.2 display: the anchor sits on that curve with its log-log slope as cone, flare fits the toe from
-// -4 to -1 stops and highlight contrast fits +1 (see NOTES.md).
+// -4 to -1 stops and highlight contrast fits +1 to +3 through the shoulder at peak = white (see NOTES.md).
 float3 ApplyPsychoVToneMap(float3 untonemapped_ap1, float peak_ratio, int target_gamut) {
   const float mid_gray_in = 0.2141f;
   const float mid_gray_out = 0.13486f;
   const float cone_response_exponent = 1.493f;
-  const float highlight_contrast = 0.67f;
+  const float highlight_contrast = 0.90f;
   const float flare = 0.98f;
   return renodx::tonemap::psychov::custom_psychotm_test31(
       renodx::color::bt709::from::AP1(untonemapped_ap1),
