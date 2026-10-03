@@ -331,9 +331,9 @@ float4 main(
   float4 _280 = t16.Sample(s2_space1, float2(TEXCOORD.x, TEXCOORD.y));
   float4 _284 = t19.Sample(s0_space1, float2(TEXCOORD.x, TEXCOORD.y));
   bool _290 = (cb0_005w == 0);
-  float _292 = cb0_000y * _284.x;
-  float _293 = cb0_000y * _284.y;
-  float _294 = cb0_000y * _284.z;
+  float _292 = (cb0_000y * CUSTOM_LENS_DIRT) * _284.x;
+  float _293 = (cb0_000y * CUSTOM_LENS_DIRT) * _284.y;
+  float _294 = (cb0_000y * CUSTOM_LENS_DIRT) * _284.z;
   if (_290) {
     float _296 = _292 + 1.0f;
     float _297 = _293 + 1.0f;
@@ -376,6 +376,9 @@ float4 main(
     _334 = _330;
     _335 = _331;
   }
+  _333 = max(0.f, _276 + (_333 - _276) * CUSTOM_BLOOM);
+  _334 = max(0.f, _277 + (_334 - _277) * CUSTOM_BLOOM);
+  _335 = max(0.f, _278 + (_335 - _278) * CUSTOM_BLOOM);
   float _336 = _176.x * _333;
   float _337 = _176.x * _334;
   float _338 = _176.x * _335;
@@ -429,7 +432,7 @@ float4 main(
     float _398 = log2(_396);
     float _399 = _398 * cb0_002z;
     float _400 = exp2(_399);
-    float _401 = _400 * cb0_002x;
+    float _401 = _400 * (cb0_002x * CUSTOM_VIGNETTE);
     float _406 = 1.0f - cb0_001x;
     float _407 = 1.0f - cb0_001y;
     float _408 = 1.0f - cb0_001z;

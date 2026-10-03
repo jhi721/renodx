@@ -21,6 +21,11 @@ struct ShaderInjectData {
   float tone_map_highlight_saturation;
   float tone_map_dechroma;
   float tone_map_flare;
+
+  float custom_lut_strength;
+  float custom_bloom;
+  float custom_lens_dirt;
+  float custom_vignette;
 };
 
 #ifndef __cplusplus
@@ -46,6 +51,11 @@ cbuffer shader_injection : register(b13, space50) {
 #define RENODX_TONE_MAP_HIGHLIGHT_SATURATION shader_injection.tone_map_highlight_saturation
 #define RENODX_TONE_MAP_DECHROMA             shader_injection.tone_map_dechroma
 #define RENODX_TONE_MAP_FLARE                shader_injection.tone_map_flare
+
+#define CUSTOM_LUT_STRENGTH shader_injection.custom_lut_strength
+#define CUSTOM_BLOOM        shader_injection.custom_bloom
+#define CUSTOM_LENS_DIRT    shader_injection.custom_lens_dirt
+#define CUSTOM_VIGNETTE     shader_injection.custom_vignette
 
 // The game's scene/UI buffer is sRGB encoded relative to paper white; scene 2.2 EOTF emulation is part of
 // RenoDX (Vanilla+, Matches SDR) only.

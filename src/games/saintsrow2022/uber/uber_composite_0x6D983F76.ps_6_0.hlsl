@@ -397,9 +397,9 @@ float4 main(
   float4 _347 = t16.Sample(s2_space1, float2(_293, _299));
   float4 _349 = t19.Sample(s0_space1, float2(_126, _127));
   bool _355 = (cb0_005w == 0);
-  float _357 = cb0_000y * _349.x;
-  float _358 = cb0_000y * _349.y;
-  float _359 = cb0_000y * _349.z;
+  float _357 = (cb0_000y * CUSTOM_LENS_DIRT) * _349.x;
+  float _358 = (cb0_000y * CUSTOM_LENS_DIRT) * _349.y;
+  float _359 = (cb0_000y * CUSTOM_LENS_DIRT) * _349.z;
   if (_355) {
     float _361 = _357 + 1.0f;
     float _362 = _358 + 1.0f;
@@ -442,6 +442,9 @@ float4 main(
     _399 = _394;
     _400 = _396;
   }
+  _398 = max(0.f, _256 + (_398 - _256) * CUSTOM_BLOOM);
+  _399 = max(0.f, _324 + (_399 - _324) * CUSTOM_BLOOM);
+  _400 = max(0.f, _342 + (_400 - _342) * CUSTOM_BLOOM);
   float _401 = _398 / _399;
   float _402 = saturate(_401);
   float _403 = _402 * 2.5f;
@@ -565,9 +568,9 @@ float4 main(
   float _525 = -0.0f - _467;
   float _526 = _525 - _483;
   float _527 = _526 + _515.z;
-  float _528 = _521 * cb0_005z;
-  float _529 = _524 * cb0_005z;
-  float _530 = _527 * cb0_005z;
+  float _528 = _521 * (cb0_005z * CUSTOM_LUT_STRENGTH);
+  float _529 = _524 * (cb0_005z * CUSTOM_LUT_STRENGTH);
+  float _530 = _527 * (cb0_005z * CUSTOM_LUT_STRENGTH);
   float _531 = _528 + _465;
   float _532 = _529 + _466;
   float _533 = _530 + _467;
@@ -603,7 +606,7 @@ float4 main(
     float _575 = log2(_573);
     float _576 = _575 * cb0_002z;
     float _577 = exp2(_576);
-    float _578 = _577 * cb0_002x;
+    float _578 = _577 * (cb0_002x * CUSTOM_VIGNETTE);
     float _583 = 1.0f - cb0_001x;
     float _584 = 1.0f - cb0_001y;
     float _585 = 1.0f - cb0_001z;
