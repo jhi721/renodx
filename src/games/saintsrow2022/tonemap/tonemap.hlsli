@@ -46,9 +46,9 @@ renodx::tonemap::aces::ODTConfig CreateODTConfig(
 // Relative to game white: 16 / 160, the paper white the curve was measured at.
 static const float MID_GRAY_OUT = 0.1f;
 
-// RenoDX (Enhanced): PsychoV-31 on pre-RRT AP1, anchored so scene 0.18 lands on MID_GRAY_OUT. Fitted to the SDR path
-// (ACES 1.0 RRT + 48-nit ODT) on a gamma 2.2 display: exact from -2 to +1 stops, lifted below -3 to avoid crushing
-// blacks (see NOTES.md).
+// RenoDX (Enhanced): PsychoV-31 on pre-RRT AP1. Anchor and cone are measured on the SDR path (ACES 1.0 RRT + 48-nit ODT,
+// dim surround) shown on a gamma 2.2 display: 0.18 -> 0.10305 of white with a log-log slope of 1.592 there; highlight
+// contrast matches +1 and +2 stops. Shadows keep that slope instead of the SDR toe, so blacks are not crushed (see NOTES.md).
 float3 ApplyPsychoVToneMap(float3 untonemapped_ap1, float peak_ratio, int target_gamut) {
   return renodx::tonemap::psychov::custom_psychotm_test31(
       renodx::color::bt709::from::AP1(untonemapped_ap1),
@@ -56,15 +56,15 @@ float3 ApplyPsychoVToneMap(float3 untonemapped_ap1, float peak_ratio, int target
       RENODX_TONE_MAP_EXPOSURE,
       RENODX_TONE_MAP_HIGHLIGHTS,
       RENODX_TONE_MAP_SHADOWS,
-      1.55f * RENODX_TONE_MAP_CONTRAST,
+      1.592f * RENODX_TONE_MAP_CONTRAST,
       0.10f * pow(RENODX_TONE_MAP_FLARE, 10.f),
-      0.86f * RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS,
-      1.88f * RENODX_TONE_MAP_CONTRAST_SHADOWS,
+      0.83f * RENODX_TONE_MAP_CONTRAST_HIGHLIGHTS,
+      RENODX_TONE_MAP_CONTRAST_SHADOWS,
       RENODX_TONE_MAP_SATURATION,
       RENODX_TONE_MAP_HIGHLIGHT_SATURATION,
       RENODX_TONE_MAP_DECHROMA,
       0.18f,
-      MID_GRAY_OUT,
+      0.10305f,
       0.f,
       1.f,
       target_gamut,
